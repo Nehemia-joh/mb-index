@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/nexabiec/mb-index.nexabie.co.tz/
+    - export DEPLOYPATH=/home/nexabiec/mbindexmeasure.nexabie.co.tz/
     - /bin/cp /home/nexabiec/repositories/mb-index/app.py $DEPLOYPATH
     - /bin/cp /home/nexabiec/repositories/mb-index/passenger_wsgi.py $DEPLOYPATH
     - /bin/cp /home/nexabiec/repositories/mb-index/requirements.txt $DEPLOYPATH
