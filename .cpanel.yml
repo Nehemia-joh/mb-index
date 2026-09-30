@@ -2,11 +2,11 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/nexabiec/mbindexmeasure.nexabie.co.tz/
-    - /bin/cp /home/nexabiec/repositories/mb-index/app.py $DEPLOYPATH
-    - /bin/cp /home/nexabiec/repositories/mb-index/passenger_wsgi.py $DEPLOYPATH
-    - /bin/cp /home/nexabiec/repositories/mb-index/requirements.txt $DEPLOYPATH
-    - /bin/cp -R /home/nexabiec/repositories/mb-index/static $DEPLOYPATH
-    - /bin/cp -R /home/nexabiec/repositories/mb-index/templates $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mbindexmeasure/app.py $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mbindexmeasure/passenger_wsgi.py $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mbindexmeasure/requirements.txt $DEPLOYPATH
+    - /bin/cp -R /home/nexabiec/repositories/mbindexmeasure/static $DEPLOYPATH
+    - /bin/cp -R /home/nexabiec/repositories/mbindexmeasure/templates $DEPLOYPATH
     - cd $DEPLOYPATH && /usr/local/bin/pip install -r requirements.txt
     - /bin/find $DEPLOYPATH -type f -exec /bin/chmod 644 {} \;
     - /bin/find $DEPLOYPATH -type d -exec /bin/chmod 755 {} \;
