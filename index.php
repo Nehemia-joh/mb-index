@@ -175,8 +175,8 @@ $subscales = [
 <body>
     <div class="container">
         <div class="header">
-            <h1>Gilliam Autism Rating Scale - Third Edition</h1>
-            <p>GARS-3 Summary/Response Form</p>
+            <h1>maishabora Autism Rating Scale - Third Edition</h1>
+            <p>MB Summary/Response Form</p>
         </div>
 
         <form action="score.php" method="POST">
