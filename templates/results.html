@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GARS-3 Results</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .section {
+            padding: 25px 30px;
+            border-bottom: 1px solid #eee;
+        }
+        .section h2 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+            display: inline-block;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .info-item {
+            background: #f8f9fa;
+            padding: 12px 15px;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+        .info-item label {
+            display: block;
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 3px;
+        }
+        .info-item span {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #2c3e50;
+            color: white;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .raw-score {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        .scaled-score {
+            font-weight: bold;
+            color: #27ae60;
+        }
+        .percentile {
+            font-weight: bold;
+            color: #3498db;
+        }
+        .composite-box {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .composite-box h3 {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+        }
+        .composite-scores {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+        .composite-item {
+            text-align: center;
+        }
+        .composite-item .value {
+            font-size: 2.5em;
+            font-weight: bold;
+            display: block;
+        }
+        .composite-item .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .interpretation-box {
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        .interpretation-box.likely {
+            background: #d4edda;
+            border: 2px solid #28a745;
+        }
+        .interpretation-box.probable {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+        }
+        .interpretation-box.unlikely {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+        }
+        .interpretation-box h3 {
+            margin-bottom: 10px;
+        }
+        .interpretation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .interpretation-item {
+            background: rgba(255,255,255,0.7);
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        .interpretation-item .value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .interpretation-item .label {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+        .back-btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+        .mute-notice {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            color: #856404;
+        }
+        .item-scores {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .header {
+                padding: 20px 15px;
+            }
+            .header h1 {
+                font-size: 1.4em;
+            }
+            .section {
+                padding: 15px;
+            }
+            .section h2 {
+                font-size: 1.2em;
+            }
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            table {
+                font-size: 0.85em;
+            }
+            th, td {
+                padding: 8px 10px;
+            }
+            .composite-box {
+                padding: 15px;
+            }
+            .composite-scores {
+                gap: 20px;
+            }
+            .composite-item .value {
+                font-size: 1.8em;
+            }
+            .interpretation-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.2em;
+            }
+            th, td {
+                padding: 6px 8px;
+                font-size: 0.8em;
+            }
+            .composite-item .value {
+                font-size: 1.5em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>GARS-3 Results</h1>
+            <p>Scoring Report</p>
+        </div>
+
+        <!-- Section 1: Identifying Information -->
+        <div class="section">
+            <h2>Section 1: Identifying Information</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>Individual's Name</label>
+                    <span>{{ individual_name or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>School</label>
+                    <span>{{ school or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Rater's Name</label>
+                    <span>{{ rater_name or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Rater's Title</label>
+                    <span>{{ rater_title or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Date of Birth</label>
+                    <span>{{ date_of_birth or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Age</label>
+                    <span>{{ age or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Gender</label>
+                    <span>{{ gender or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Grade</label>
+                    <span>{{ grade or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Examiner's Name</label>
+                    <span>{{ examiner_name or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Examiner's Title</label>
+                    <span>{{ examiner_title or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Date of Rating</label>
+                    <span>{{ date_of_rating or 'Not provided' }}</span>
+                </div>
+                <div class="info-item">
+                    <label>Rater Known For</label>
+                    <span>{{ rater_known_for or 'Not provided' }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: Subscale Performance -->
+        <div class="section">
+            <h2>Section 2: Subscale Performance</h2>
+
+            {% if is_mute %}
+            <div class="mute-notice">
+                <strong>Note:</strong> The individual is mute. Cognitive Style and Maladaptive Speech subscales were not completed. Only 4 subscales were used for composite scoring.
+            </div>
+            {% endif %}
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Subscale</th>
+                        <th>Raw Score</th>
+                        <th>Percentile Rank</th>
+                        <th>Scaled Score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subscale in subscale_results %}
+                    <tr {% if is_mute and subscale.short in ['CS', 'MS'] %}style="opacity: 0.5;"{% endif %}>
+                        <td>
+                            <strong>{{ subscale.name }}</strong> ({{ subscale.short }})
+                            {% if is_mute and subscale.short in ['CS', 'MS'] %}
+                            <br><small style="color: #999;">Not completed (mute)</small>
+                            {% endif %}
+                        </td>
+                        <td class="raw-score">{{ subscale.raw_score }}</td>
+                        <td class="percentile">{{ subscale.percentile_rank or 'N/A' }}</td>
+                        <td class="scaled-score">{{ subscale.scaled_score or 'N/A' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 3: Composite Performance -->
+        <div class="section">
+            <h2>Section 3: Composite Performance</h2>
+
+            <div class="composite-box">
+                <h3>Sum of Scaled Scores ({{ '6 Subscales' if use_six else '4 Subscales' }})</h3>
+                <div class="composite-scores">
+                    <div class="composite-item">
+                        <span class="value">{{ sum_scaled }}</span>
+                        <span class="label">Sum of Scaled Scores</span>
+                    </div>
+                    <div class="composite-item">
+                        <span class="value">{{ composite_percentile or 'N/A' }}</span>
+                        <span class="label">Percentile Rank</span>
+                    </div>
+                    <div class="composite-item">
+                        <span class="value">{{ autism_index or 'N/A' }}</span>
+                        <span class="label">Autism Index</span>
+                    </div>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Subscale</th>
+                        <th>Scaled Score</th>
+                        <th>Included in Composite</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subscale in subscale_results %}
+                    <tr>
+                        <td><strong>{{ subscale.name }}</strong> ({{ subscale.short }})</td>
+                        <td class="scaled-score">{{ subscale.scaled_score or 'N/A' }}</td>
+                        <td>
+                            {% if subscale in included_subscales %}
+                            <span style="color: #27ae60; font-weight: bold;">&#10003; Yes</span>
+                            {% else %}
+                            <span style="color: #999;">&#10007; No (excluded)</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 4: Interpretation Guide -->
+        <div class="section">
+            <h2>Section 4: Interpretation Guide</h2>
+
+            {% if autism_index %}
+                {% if autism_index <= 54 %}
+                <div class="interpretation-box unlikely">
+                {% elif autism_index <= 70 %}
+                <div class="interpretation-box probable">
+                {% else %}
+                <div class="interpretation-box likely">
+                {% endif %}
+                    <h3>Autism Index: {{ autism_index }}</h3>
+                    <div class="interpretation-grid">
+                        <div class="interpretation-item">
+                            <div class="value">{{ probability }}</div>
+                            <div class="label">Probability of ASD</div>
+                        </div>
+                        <div class="interpretation-item">
+                            <div class="value">{{ severity }}</div>
+                            <div class="label">DSM-5 Severity Level</div>
+                        </div>
+                        <div class="interpretation-item">
+                            <div class="value">{{ descriptor }}</div>
+                            <div class="label">Descriptor</div>
+                        </div>
+                    </div>
+                </div>
+            {% else %}
+                <p style="color: #999; font-style: italic;">Unable to determine interpretation. Please check the sum of scaled scores.</p>
+            {% endif %}
+
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
+                <h4 style="color: #2c3e50; margin-bottom: 10px;">Interpretation Reference</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Autism Index</th>
+                            <th>Probability of ASD</th>
+                            <th>DSM-5 Severity Level</th>
+                            <th>Descriptor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>&le;54</td>
+                            <td>Unlikely</td>
+                            <td>Not ASD</td>
+                            <td>Not ASD</td>
+                        </tr>
+                        <tr>
+                            <td>55-70</td>
+                            <td>Probable</td>
+                            <td>Level 1</td>
+                            <td>Minimal Support Required</td>
+                        </tr>
+                        <tr>
+                            <td>71-100</td>
+                            <td>Very Likely</td>
+                            <td>Level 2</td>
+                            <td>Requiring Substantial Support</td>
+                        </tr>
+                        <tr>
+                            <td>&ge;101</td>
+                            <td>Very Likely</td>
+                            <td>Level 3</td>
+                            <td>Requiring Very Substantial Support</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="padding: 20px 30px; text-align: center;">
+            <a href="/" class="back-btn">Start New Assessment</a>
+        </div>
+    </div>
+</body>
+</html>
