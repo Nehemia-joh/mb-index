@@ -7,8 +7,8 @@ deployment:
     - /bin/cp /home/nexabiec/repositories/mb-index/requirements.txt $DEPLOYPATH
     - /bin/cp -R /home/nexabiec/repositories/mb-index/static $DEPLOYPATH
     - /bin/cp -R /home/nexabiec/repositories/mb-index/templates $DEPLOYPATH
-    - /bin/cp /home/nexabiec/repositories/mb-index/Table\ A.pdf $DEPLOYPATH
-    - /bin/cp "/home/nexabiec/repositories/mb-index/Gilliam Autism Rating Scale.pdf" $DEPLOYPATH
     - cd $DEPLOYPATH && /usr/local/bin/pip install -r requirements.txt
     - /bin/find $DEPLOYPATH -type f -exec /bin/chmod 644 {} \;
     - /bin/find $DEPLOYPATH -type d -exec /bin/chmod 755 {} \;
+
+ 
