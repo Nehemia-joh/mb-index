@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# Maisha Bora — clean URLs (/admin instead of /admin.php — domain-agnostic,
+# works in any document root or subfolder)
+# All unknown requests pass through route.php; existing files are served as-is.
+# ---------------------------------------------------------------------------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Serve real files/folders directly (stylesheets, PDFs...)
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Everything else goes to the router
+    RewriteRule ^(.*)$ route.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# Never let anyone download the environment file or the local sqlite db
+<FilesMatch "^(\.env|\.env[-.a-z0-9]*)$|(\.sqlite3|\.db|\.sql)$">
+    Require all denied
+</FilesMatch>
+
+DirectoryIndex index.php index.html

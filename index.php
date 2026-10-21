@@ -1,5 +1,16 @@
 <?php
-// GARS-3 Rating Form
+// Maisha Bora Rating Form
+// Route: /index — login is required; every visit of this page is tracked.
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/tracker.php';
+require_once __DIR__ . '/includes/ui.php';
+define('GARS_ROUTE', 'index');
+
+$currentUser = gars_require_login();
+gars_track_page('page_visit', 'Opened the assessment form');
+
 $subscales = [
     [
         "id" => "rb",
@@ -108,43 +119,45 @@ $subscales = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GARS-3 Rating Form</title>
+    <meta name="theme-color" content="#0B5CAF">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <title>Maisha Bora Rating Form</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { font-size: 2em; margin-bottom: 10px; }
-        .header p { font-size: 1.1em; opacity: 0.9; }
-        .form-section { padding: 25px 30px; border-bottom: 1px solid #eee; }
-        .form-section h2 { color: #2c3e50; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 3px solid #3498db; display: inline-block; }
+        body { font-family: 'DM Sans', system-ui, sans-serif; background: #f4f8ff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(11,92,175,.12); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.4em; font-weight: 500; margin-bottom: 6px; }
+        .header p { font-size: .8em; letter-spacing: 2px; text-transform: uppercase; color: #ffe49a; }
+        .form-section { padding: 25px 30px; border-bottom: 1px solid #c8daf2; }
+        .form-section h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.55em; color: #0B5CAF; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #FFBA19; display: inline-block; }
         .form-row { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px; }
         .form-group { flex: 1; min-width: 200px; }
         .form-group label { display: block; margin-bottom: 5px; color: #555; font-weight: 600; font-size: 0.9em; }
         .form-group input, .form-group select { width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 1em; transition: border-color 0.3s; }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: #3498db; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #0B5CAF; }
         .subscale-section { background: #f8f9fa; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-        .subscale-title { color: #2c3e50; font-size: 1.3em; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #3498db; }
+        .subscale-title { font-family: 'Cormorant Garamond', Georgia, serif; color: #0B5CAF; font-size: 1.45em; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #FFBA19; }
         .item-row { display: flex; align-items: center; padding: 12px 15px; margin-bottom: 8px; background: white; border-radius: 6px; border: 1px solid #e0e0e0; transition: box-shadow 0.2s; }
         .item-row:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .item-number { background: #3498db; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px; flex-shrink: 0; }
+        .item-number { background: #0B5CAF; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px; flex-shrink: 0; }
         .item-text { flex: 1; color: #333; line-height: 1.4; }
         .rating-options { display: flex; gap: 8px; flex-shrink: 0; }
         .rating-options label { display: flex; flex-direction: column; align-items: center; cursor: pointer; padding: 5px 10px; border-radius: 4px; transition: background 0.2s; }
-        .rating-options label:hover { background: #e8f4f8; }
+        .rating-options label:hover { background: #eaf1fb; }
         .rating-options input[type="radio"] { margin-bottom: 3px; }
         .rating-options span { font-size: 0.75em; color: #666; }
-        .mute-section { background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .mute-section h3 { color: #856404; margin-bottom: 10px; }
+        .mute-section { background: #fff4d6; border: 2px solid #FFBA19; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .mute-section h3 { color: #92400e; margin-bottom: 10px; }
         .mute-options { display: flex; gap: 20px; margin-top: 10px; }
         .mute-options label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 1.1em; }
         .mute-options input[type="radio"] { width: 20px; height: 20px; }
-        .submit-btn { display: block; width: 100%; padding: 15px; background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); color: white; border: none; border-radius: 8px; font-size: 1.2em; font-weight: bold; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
-        .submit-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(39, 174, 96, 0.4); }
-        .instructions { background: #e8f4f8; border-left: 4px solid #3498db; padding: 15px; margin-bottom: 20px; border-radius: 0 6px 6px 0; }
-        .instructions h4 { color: #2c3e50; margin-bottom: 8px; }
+        .submit-btn { display: block; width: 100%; padding: 15px; background: #FFBA19; color: #0B5CAF; border: 1.5px solid #FFBA19; border-radius: 8px; font-size: .95em; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .submit-btn:hover { transform: translateY(-2px); background: #ffe49a; border-color: #ffe49a; box-shadow: 0 5px 20px rgba(255,186,25,0.35); }
+        .instructions { background: #eaf1fb; border-left: 4px solid #0B5CAF; padding: 15px; margin-bottom: 20px; border-radius: 0 6px 6px 0; }
+        .instructions h4 { color: #0B5CAF; margin-bottom: 8px; }
         .instructions p { color: #555; line-height: 1.6; }
-        .subtotal-row { display: flex; justify-content: space-between; align-items: center; background: #2c3e50; color: white; padding: 12px 15px; border-radius: 6px; margin-top: 10px; font-weight: bold; }
+        .subtotal-row { display: flex; justify-content: space-between; align-items: center; background: #0B5CAF; color: white; padding: 12px 15px; border-radius: 6px; margin-top: 10px; font-weight: bold; }
         @media (max-width: 768px) {
             body { padding: 10px; }
             .header { padding: 20px 15px; }
@@ -173,48 +186,50 @@ $subscales = [
     </style>
 </head>
 <body>
+<?php gars_navbar('index'); ?>
     <div class="container">
         <div class="header">
-            <h1>maishabora Autism Rating Scale - Third Edition</h1>
+            <h1>Maisha Bora Autism Rating Scale - Third Edition</h1>
             <p>MB Summary/Response Form</p>
         </div>
 
-        <form action="score.php" method="POST">
+        <form action="<?php echo gars_e(gars_url('score')); ?>" method="POST">
             <!-- Section 1: Identifying Information -->
             <div class="form-section">
                 <h2>Section 1: Identifying Information</h2>
+                <p class="muted" style="margin-bottom:12px;"><span style="color:#dc2626;font-weight:700;">*</span> — required. The record cannot be saved until every required field is filled in.</p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="individual_name">Individual's Name</label>
-                        <input type="text" id="individual_name" name="individual_name">
+                        <label for="individual_name">Individual's Name <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="individual_name" name="individual_name" required>
                     </div>
                     <div class="form-group">
-                        <label for="school">School</label>
-                        <input type="text" id="school" name="school">
+                        <label for="school">School <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="school" name="school" required>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="rater_name">Rater's Name</label>
-                        <input type="text" id="rater_name" name="rater_name">
+                        <label for="rater_name">Rater's Name <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="rater_name" name="rater_name" required>
                     </div>
                     <div class="form-group">
-                        <label for="rater_title">Rater's Title</label>
-                        <input type="text" id="rater_title" name="rater_title">
+                        <label for="rater_title">Rater's Title <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="rater_title" name="rater_title" required>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="date_of_birth">Date of Birth</label>
-                        <input type="date" id="date_of_birth" name="date_of_birth">
+                        <label for="date_of_birth">Date of Birth <span style="color:#dc2626;">*</span></label>
+                        <input type="date" id="date_of_birth" name="date_of_birth" required>
                     </div>
                     <div class="form-group">
-                        <label for="age">Age</label>
-                        <input type="text" id="age" name="age">
+                        <label for="age">Age <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="age" name="age" required>
                     </div>
                     <div class="form-group">
-                        <label for="gender">Gender</label>
-                        <select id="gender" name="gender">
+                        <label for="gender">Gender <span style="color:#dc2626;">*</span></label>
+                        <select id="gender" name="gender" required>
                             <option value="">Select</option>
                             <option value="Female">Female</option>
                             <option value="Male">Male</option>
@@ -227,18 +242,18 @@ $subscales = [
                         <input type="text" id="grade" name="grade">
                     </div>
                     <div class="form-group">
-                        <label for="examiner_name">Examiner's Name</label>
-                        <input type="text" id="examiner_name" name="examiner_name">
+                        <label for="examiner_name">Examiner's Name <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="examiner_name" name="examiner_name" required>
                     </div>
                     <div class="form-group">
-                        <label for="examiner_title">Examiner's Title</label>
-                        <input type="text" id="examiner_title" name="examiner_title">
+                        <label for="examiner_title">Examiner's Title <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="examiner_title" name="examiner_title" required>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="date_of_rating">Date of GARS-3 Rating</label>
-                        <input type="date" id="date_of_rating" name="date_of_rating">
+                        <label for="date_of_rating">Date of Rating <span style="color:#dc2626;">*</span></label>
+                        <input type="date" id="date_of_rating" name="date_of_rating" required>
                     </div>
                     <div class="form-group">
                         <label for="rater_known_for">Rater Has Known Individual For</label>

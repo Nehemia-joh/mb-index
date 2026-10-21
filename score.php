@@ -1,7 +1,19 @@
 <?php
-// GARS-3 Scoring Logic
+// Maisha Bora Scoring Logic
+// Route: /score — receives the POSTed rating form, validates required fields,
+// stores the record in the database and logs the change in the activity trail.
 
-$subscales = [
+// --- application bootstrap -------------------------------------------------
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/tracker.php';
+require_once __DIR__ . '/includes/ui.php';
+define('GARS_ROUTE', 'score');
+
+$currentUser = gars_require_login();
+
+$subscaleDefs = [
     ["id" => "rb", "name" => "Restricted/Repetitive Behaviors", "short" => "RB"],
     ["id" => "si", "name" => "Social Interaction", "short" => "SI"],
     ["id" => "sc", "name" => "Social Communication", "short" => "SC"],
@@ -160,23 +172,77 @@ function getInterpretation($autismIndex) {
     return ["Very Likely", "Level 3", "Requiring Very Substantial Support"];
 }
 
-// Process form submission
-$individualName = $_POST['individual_name'] ?? '';
-$school = $_POST['school'] ?? '';
-$raterName = $_POST['rater_name'] ?? '';
-$raterTitle = $_POST['rater_title'] ?? '';
+// --- process form submission -------------------------------------------------
+$individualName = trim($_POST['individual_name'] ?? '');
+$school = trim($_POST['school'] ?? '');
+$raterName = trim($_POST['rater_name'] ?? '');
+$raterTitle = trim($_POST['rater_title'] ?? '');
 $dob = $_POST['date_of_birth'] ?? '';
-$age = $_POST['age'] ?? '';
+$age = trim($_POST['age'] ?? '');
 $gender = $_POST['gender'] ?? '';
-$grade = $_POST['grade'] ?? '';
-$examinerName = $_POST['examiner_name'] ?? '';
-$examinerTitle = $_POST['examiner_title'] ?? '';
+$grade = trim($_POST['grade'] ?? '');
+$examinerName = trim($_POST['examiner_name'] ?? '');
+$examinerTitle = trim($_POST['examiner_title'] ?? '');
 $dateOfRating = $_POST['date_of_rating'] ?? '';
-$raterKnownFor = $_POST['rater_known_for'] ?? '';
+$raterKnownFor = trim($_POST['rater_known_for'] ?? '');
 $isMute = ($_POST['is_mute'] ?? 'no') === 'yes';
 
+// --- REQUIRED-field validation: nothing is saved until these are filled ------
+$missing = gars_validate_required([
+    'individual_name' => $individualName,
+    'school'          => $school,
+    'rater_name'      => $raterName,
+    'rater_title'     => $raterTitle,
+    'date_of_birth'   => $dob,
+    'age'             => $age,
+    'gender'          => $gender,
+    'examiner_name'   => $examinerName,
+    'examiner_title'  => $examinerTitle,
+    'date_of_rating'  => $dateOfRating,
+], [
+    'individual_name' => "Individual's Name",
+    'school'          => 'School',
+    'rater_name'      => "Rater's Name",
+    'rater_title'     => "Rater's Title",
+    'date_of_birth'   => 'Date of Birth',
+    'age'             => 'Age',
+    'gender'          => 'Gender',
+    'examiner_name'   => "Examiner's Name",
+    'examiner_title'  => "Examiner's Title",
+    'date_of_rating'  => 'Date of Rating',
+]);
+
+if ($missing) {
+    gars_log_activity('validation_failed', 'score', 'Assessment not saved — missing required field(s): ' . implode(', ', $missing));
+    gars_track_page('page_visit', 'Blocked: missing required fields');
+    http_response_code(422);
+    ?><!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Required fields missing</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', system-ui, sans-serif; background: #f4f8ff; min-height: 100vh; padding: 20px; display: flex; align-items: center; justify-content: center; }
+.card { background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(11,92,175,.12); padding: 34px; max-width: 560px; }
+h1 { color: #c0392b; font-size: 1.5em; margin-bottom: 12px; }
+p { color: #555; line-height: 1.6; }
+ul { margin: 14px 0 20px 20px; color: #c0392b; font-weight: 600; }
+a.btn, button.btn { display: inline-block; padding: 12px 26px; background: #FFBA19; color: #0B5CAF; border: 1.5px solid #FFBA19; text-decoration: none; border-radius: 3px; font-weight: 500; letter-spacing: .8px; text-transform: uppercase; font-size: .825rem; cursor: pointer; }
+</style></head>
+<body>
+<div class="card">
+    <h1>Data not saved — required fields are missing</h1>
+    <p>The assessment record cannot be stored until all required fields in Section&nbsp;1 are completed. Please check:</p>
+    <ul><?php foreach ($missing as $m) echo '<li>' . htmlspecialchars($m, ENT_QUOTES) . '</li>'; ?></ul>
+    <button class="btn" type="button" onclick="history.back()">Go back and complete the form</button>
+</div>
+</body>
+</html><?php
+    exit;
+} // data beyond this point may be saved safely
+
 $subscaleResults = [];
-foreach ($subscales as $subscale) {
+foreach ($subscaleDefs as $subscale) {
     $rawScore = 0;
     $itemScores = [];
     $numQuestions = $questions[$subscale['id']];
@@ -213,50 +279,105 @@ foreach ($includedSubscales as $s) {
 
 [$compositePercentile, $autismIndex] = getCompositeResults($sumScaled, $useSix);
 [$probability, $severity, $descriptor] = getInterpretation($autismIndex);
+
+// --- save the record in the database + record the change in the audit trail --
+$savedId = null;
+try {
+    $scaledStr = [];
+    $pctStr = [];
+    foreach ($subscaleResults as $s) {
+        $scaledStr[] = strtoupper($s['short']) . '=' . ($s['scaled_score'] ?? '-');
+        $pctStr[]    = strtoupper($s['short']) . '=' . ($s['percentile_rank'] ?? '-');
+    }
+    $itemScoresJson = json_encode(array_map(
+        fn ($s) => [$s['short'] => $s['item_scores']],
+        $subscaleResults
+    ));
+
+    $stmt = gars_db()->prepare(
+        'INSERT INTO assessments
+            (created_by, individual_name, school, rater_name, rater_title, date_of_birth, age, gender, grade,
+             examiner_name, examiner_title, date_of_rating, rater_known_for, is_mute,
+             raw_rb, raw_si, raw_sc, raw_er, raw_cs, raw_ms, scaled, percentiles, sum_scaled,
+             composite_percentile, autism_index, probability, severity_level, severity_desc, item_scores)
+         VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    $rawByShort = [];
+    foreach ($subscaleResults as $s) {
+        $rawByShort[$s['short']] = (int) $s['raw_score'];
+    }
+    $stmt->execute([
+        $currentUser['id'],
+        $individualName, $school, $raterName, $raterTitle,
+        $dob !== '' ? $dob : null, $age, $gender, $grade !== '' ? $grade : null,
+        $examinerName, $examinerTitle, $dateOfRating !== '' ? $dateOfRating : null, $raterKnownFor,
+        $isMute ? 1 : 0,
+        $rawByShort['RB'] ?? 0, $rawByShort['SI'] ?? 0, $rawByShort['SC'] ?? 0,
+        $rawByShort['ER'] ?? 0, $rawByShort['CS'] ?? 0, $rawByShort['MS'] ?? 0,
+        implode('|', $scaledStr), implode('|', $pctStr), $sumScaled,
+        (string) $compositePercentile ?: '-', (int) $autismIndex,
+        (string) $probability ?: '-', (string) $severity ?: '-', (string) $descriptor ?: '-',
+        $itemScoresJson,
+    ]);
+    $savedId = (int) gars_db()->lastInsertId();
+    gars_log_activity(
+        'create_assessment',
+        'score',
+        "Saved Maisha Bora record #$savedId for \"$individualName\" (Autism Index " . (int) $autismIndex . ')'
+    );
+    $GLOBALS['GARS_SUPPRESS_PAGE_VISIT_LOG'] = true; // this POST already logged its change
+    gars_track_page('page_visit', "Created record #$savedId");
+} catch (Throwable $e) {
+    gars_log_activity('save_failed', 'score', 'Database save failed: ' . $e->getMessage());
+    $saveError = 'Scoring succeeded but the record could NOT be saved to the database: ' . $e->getMessage();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GARS-3 Results</title>
+    <meta name="theme-color" content="#0B5CAF">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <title>Maisha Bora Results</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { font-size: 2em; margin-bottom: 10px; }
-        .section { padding: 25px 30px; border-bottom: 1px solid #eee; }
-        .section h2 { color: #2c3e50; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 3px solid #3498db; display: inline-block; }
+        body { font-family: 'DM Sans', system-ui, sans-serif; background: #f4f8ff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(11,92,175,.12); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.4em; font-weight: 500; margin-bottom: 6px; }
+        .section { padding: 25px 30px; border-bottom: 1px solid #c8daf2; }
+        .section h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.55em; color: #0B5CAF; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #FFBA19; display: inline-block; }
         .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .info-item { background: #f8f9fa; padding: 12px 15px; border-radius: 6px; border-left: 4px solid #3498db; }
+        .info-item { background: #f8f9fa; padding: 12px 15px; border-radius: 6px; border-left: 4px solid #0B5CAF; }
         .info-item label { display: block; font-size: 0.8em; color: #666; margin-bottom: 3px; }
-        .info-item span { font-weight: 600; color: #2c3e50; }
+        .info-item span { font-weight: 600; color: #0B5CAF; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #2c3e50; color: white; font-weight: 600; }
+        th { background: #0B5CAF; color: white; font-weight: 600; }
         tr:hover { background: #f8f9fa; }
-        .raw-score { font-weight: bold; color: #e74c3c; }
-        .scaled-score { font-weight: bold; color: #27ae60; }
-        .percentile { font-weight: bold; color: #3498db; }
-        .composite-box { background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: white; padding: 25px; border-radius: 8px; text-align: center; margin: 20px 0; }
+        .raw-score { font-weight: bold; color: #dc2626; }
+        .scaled-score { font-weight: bold; color: #a97b00; }
+        .percentile { font-weight: bold; color: #0B5CAF; }
+        .composite-box { background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; padding: 25px; border-radius: 8px; text-align: center; margin: 20px 0; }
         .composite-box h3 { font-size: 1.3em; margin-bottom: 15px; }
         .composite-scores { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; }
         .composite-item { text-align: center; }
-        .composite-item .value { font-size: 2.5em; font-weight: bold; display: block; }
+        .composite-item .value { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.8em; font-weight: 500; color: #FFBA19; display: block; }
         .composite-item .label { font-size: 0.9em; opacity: 0.9; }
         .interpretation-box { padding: 20px; border-radius: 8px; margin: 15px 0; }
         .interpretation-box.likely { background: #d4edda; border: 2px solid #28a745; }
-        .interpretation-box.probable { background: #fff3cd; border: 2px solid #ffc107; }
+        .interpretation-box.probable { background: #fff4d6; border: 2px solid #FFBA19; }
         .interpretation-box.unlikely { background: #f8d7da; border: 2px solid #dc3545; }
         .interpretation-box h3 { margin-bottom: 10px; }
         .interpretation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
         .interpretation-item { background: rgba(255,255,255,0.7); padding: 15px; border-radius: 6px; text-align: center; }
-        .interpretation-item .value { font-size: 1.3em; font-weight: bold; color: #2c3e50; }
+        .interpretation-item .value { font-size: 1.3em; font-weight: bold; color: #0B5CAF; }
         .interpretation-item .label { font-size: 0.85em; color: #666; margin-top: 5px; }
-        .back-btn { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; text-decoration: none; border-radius: 6px; font-weight: 600; transition: transform 0.2s, box-shadow 0.2s; }
+        .back-btn { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; text-decoration: none; border-radius: 6px; font-weight: 600; transition: transform 0.2s, box-shadow 0.2s; }
         .back-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4); }
-        .mute-notice { background: #fff3cd; border: 2px solid #ffc107; border-radius: 6px; padding: 15px; margin-bottom: 15px; color: #856404; }
+        .mute-notice { background: #fff4d6; border: 2px solid #FFBA19; border-radius: 6px; padding: 15px; margin-bottom: 15px; color: #92400e; }
         @media (max-width: 768px) {
             body { padding: 10px; }
             .header { padding: 20px 15px; }
@@ -279,11 +400,29 @@ foreach ($includedSubscales as $s) {
     </style>
 </head>
 <body>
+<?php gars_navbar('score'); ?>
     <div class="container">
         <div class="header">
-            <h1>GARS-3 Results</h1>
+            <h1>Maisha Bora Results</h1>
             <p>Scoring Report</p>
         </div>
+
+        <?php if (!empty($savedId)): ?>
+        <div style="padding: 16px 30px 0;">
+            <div class="save-notice" style="background:#e9f7ed;border:2px solid #28a745;border-radius:8px;padding:14px 18px;color:#14532a;">
+                <strong>Saved to the database.</strong>
+                This completed assessment is stored as record
+                <a style="color:inherit;font-weight:700;text-decoration:underline;" href="<?php echo gars_e(gars_url('assessment')) . '?id=' . (int) $savedId; ?>">#<?php echo (int) $savedId; ?></a>
+                and every page move and change is being recorded in the activity trail.
+            </div>
+        </div>
+        <?php elseif (!empty($saveError)): ?>
+        <div style="padding: 16px 30px 0;">
+            <div style="background:#fdeaea;border:2px solid #dc3545;border-radius:8px;padding:14px 18px;color:#7c1a24;">
+                <strong>Not saved:</strong> <?php echo htmlspecialchars($saveError, ENT_QUOTES); ?>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- Section 1: Identifying Information -->
         <div class="section">
@@ -412,7 +551,7 @@ foreach ($includedSubscales as $s) {
             <?php endif; ?>
 
             <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
-                <h4 style="color: #2c3e50; margin-bottom: 10px;">Interpretation Reference</h4>
+                <h4 style="color: #0B5CAF; margin-bottom: 10px;">Interpretation Reference</h4>
                 <table>
                     <thead>
                         <tr><th>Autism Index</th><th>Probability of ASD</th><th>DSM-5 Severity Level</th><th>Descriptor</th></tr>
@@ -428,7 +567,8 @@ foreach ($includedSubscales as $s) {
         </div>
 
         <div style="padding: 20px 30px; text-align: center;">
-            <a href="index.php" class="back-btn">Start New Assessment</a>
+            <a href="<?php echo gars_e(gars_url('index')); ?>" class="back-btn">Start New Assessment</a>
+            <a href="<?php echo gars_e(gars_url('assessments')); ?>" class="back-btn" style="background:#FFBA19;color:#0B5CAF;border-color:#FFBA19;">All Records</a>
         </div>
     </div>
 </body>

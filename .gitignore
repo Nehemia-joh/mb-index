@@ -1,0 +1,16 @@
+# local MySQL dev/test database is never tracked
+*.sql.bak
+
+# environment / secrets — NEVER commit the real .envmb-index
+# (it lives one step behind this project folder on purpose)
+.env
+.envmb-index
+
+# IDE / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# package leftovers
+*.deb

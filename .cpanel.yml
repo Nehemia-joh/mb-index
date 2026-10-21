@@ -1,10 +1,18 @@
 ---
+# ----------------------------------------------------------------------
+# deployment: copy the application + routing + schema files to cPanel
+# (the .envmb-index file is NOT repo-tracked; it lives one step behind the project
+# folder and is created manually once on the server)
+# ----------------------------------------------------------------------
 deployment:
   tasks:
     - export DEPLOYPATH=/home/nexabiec/mb-index.nexabie.co.tz/
-    - /bin/cp /home/nexabiec/repositories/mb-index/index.php $DEPLOYPATH
-    - /bin/cp /home/nexabiec/repositories/mb-index/score.php $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mb-index/*.php $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mb-index/database.sql $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mb-index/.env.example $DEPLOYPATH
+    - /bin/cp /home/nexabiec/repositories/mb-index/.htaccess $DEPLOYPATH
+    - /bin/mkdir -p $DEPLOYPATH/includes && /bin/cp /home/nexabiec/repositories/mb-index/includes/*.php $DEPLOYPATH/includes/
     - /bin/cp /home/nexabiec/repositories/mb-index/Table\ A.pdf $DEPLOYPATH
     - /bin/cp "/home/nexabiec/repositories/mb-index/Gilliam Autism Rating Scale.pdf" $DEPLOYPATH
-    - /bin/find $DEPLOYPATH -type f -exec /bin/chmod 644 {} \;
+    - /bin/find $DEPLOYPATH -type f -name "*.php" -exec /bin/chmod 644 {} \;
     - /bin/find $DEPLOYPATH -type d -exec /bin/chmod 755 {} \;
