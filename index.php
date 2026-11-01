@@ -28,7 +28,7 @@ gars_track_page('page_visit', 'Opened the assessment form');
 <main class="wrap" id="main">
     <div class="page-head">
         <h1>Rating form</h1>
-        <p class="sub">Fill in the identifying information, mark every item on the scale, then answer the mute question. Form data is stored as a record under your account.</p>
+        <p class="sub">Fill in the identifying information, answer the mute question after the fourth subscale, then mark the items. Form data is stored as a record under your account.</p>
     </div>
 
 <?php gars_rating_form_body(gars_url('score'), 'Score and save'); ?>

@@ -300,13 +300,13 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
                 </div>
             </div>
 
-            <!-- Section 2: rating items -->
+            <!-- Section 2: rating items (subscales 1-4) -->
             <div class="form-block">
                 <div class="fb-head">
                     <span class="fb-no" aria-hidden="true">2</span>
                     <div>
                         <h2>Rating items</h2>
-                        <p class="fb-sub">Mark how well each item describes the individual's typical behavior under ordinary circumstances.</p>
+                        <p class="fb-sub">Mark how well each item describes the individual's typical behavior under ordinary circumstances. The mute question follows the fourth subscale.</p>
                     </div>
                 </div>
 
@@ -319,7 +319,7 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
                     </ul>
                 </div>
 
-                <?php foreach ($subscales as $subscale): ?>
+                <?php $renderScale = static function (array $subscale) use ($markVal): void { ?>
                 <div class="scale" data-sc="<?php echo $subscale['id']; ?>">
                     <div class="scale-head">
                         <span class="scale-code"><?php echo $subscale['short']; ?></span>
@@ -351,16 +351,18 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
                         <span class="st-n"><strong id="<?php echo $subscale['id']; ?>_subtotal">0</strong> <i>/ <?php echo count($subscale['questions']) * 3; ?></i></span>
                     </div>
                 </div>
-                <?php endforeach; ?>
+                <?php }; ?>
+
+                <?php foreach (array_slice($subscales, 0, 4) as $subscale) { $renderScale($subscale); } ?>
             </div>
 
-            <!-- Section 3: mute question -->
+            <!-- Section 3: mute question (before the subscales it affects) -->
             <div class="form-block">
                 <div class="fb-head">
                     <span class="fb-no" aria-hidden="true">3</span>
                     <div>
                         <h2>Mute question</h2>
-                        <p class="fb-sub">If the individual is mute, the Cognitive Style and Maladaptive Speech items stay unmarked and the composite score is computed from the other 4 subscales.</p>
+                        <p class="fb-sub">Answer this before rating the last two subscales. If the individual is mute, Cognitive Style and Maladaptive Speech stay unmarked and the composite score is computed from the other 4 subscales.</p>
                     </div>
                 </div>
                 <div class="mute-choice">
@@ -374,6 +376,19 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
                     </label>
                 </div>
                 <p class="mute-note" id="mute-note" hidden>Cognitive Style and Maladaptive Speech are dimmed below. Their ratings are still accepted but excluded from the composite.</p>
+            </div>
+
+            <!-- Section 4: rating items, continued (subscales 5-6) -->
+            <div class="form-block">
+                <div class="fb-head">
+                    <span class="fb-no" aria-hidden="true">4</span>
+                    <div>
+                        <h2>Rating items, continued</h2>
+                        <p class="fb-sub">Cognitive Style and Maladaptive Speech. These two subscales are skipped when the individual is mute.</p>
+                    </div>
+                </div>
+
+                <?php foreach (array_slice($subscales, 4) as $subscale) { $renderScale($subscale); } ?>
             </div>
 
             <!-- submit -->
