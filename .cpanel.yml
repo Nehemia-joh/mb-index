@@ -12,7 +12,9 @@ deployment:
     - /bin/cp /home/nexabiec/repositories/mb-index/.env.example $DEPLOYPATH
     - /bin/cp /home/nexabiec/repositories/mb-index/.htaccess $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/includes && /bin/cp /home/nexabiec/repositories/mb-index/includes/*.php $DEPLOYPATH/includes/
+    - /bin/mkdir -p $DEPLOYPATH/static && /bin/cp -R /home/nexabiec/repositories/mb-index/static/* $DEPLOYPATH/static/
     - /bin/cp /home/nexabiec/repositories/mb-index/Table\ A.pdf $DEPLOYPATH
     - /bin/cp "/home/nexabiec/repositories/mb-index/Gilliam Autism Rating Scale.pdf" $DEPLOYPATH
     - /bin/find $DEPLOYPATH -type f -name "*.php" -exec /bin/chmod 644 {} \;
+    - /bin/find $DEPLOYPATH/static -type f -exec /bin/chmod 644 {} \;
     - /bin/find $DEPLOYPATH -type d -exec /bin/chmod 755 {} \;
