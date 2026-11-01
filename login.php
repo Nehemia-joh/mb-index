@@ -53,33 +53,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             gars_flash('Welcome back, ' . $user['full_name'] . '!');
             gars_redirect(gars_url(gars_home_route($user)));
         }
-        $error = 'Invalid username or password.';
+        $error = 'That username and password do not match an account.';
         gars_log_activity('login_failed', 'login', 'Failed login attempt for "' . $username . '"');
     }
 }
 
-gars_header('Login', 'login', false);
+gars_header('Sign in', 'login', false);
 ?>
-<div class="section">
-    <h2>Login</h2>
+<div class="page-head" style="padding-top:18px;">
+    <h1>Sign in</h1>
+    <p class="sub">Rate scales, keep records and follow the activity trail — everything starts here.</p>
+</div>
+
+<div class="login-panel">
     <?php if ($error): ?><div class="notice notice-error"><?php echo gars_e($error); ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="notice notice-<?php echo gars_e($flash['type']); ?>"><?php echo gars_e($flash['message']); ?></div><?php endif; ?>
-    <div class="card" style="max-width:420px; margin:0 auto;">
-        <form method="post" action="<?php echo gars_url('login'); ?>" autocomplete="off">
-            <div class="form-group" style="margin-bottom:14px;">
-                <label for="username">Username <span class="req">*</span></label>
-                <input type="text" id="username" name="username" required
-                       value="<?php echo gars_e($username); ?>" autofocus>
-            </div>
-            <div class="form-group" style="margin-bottom:18px;">
-                <label for="password">Password <span class="req">*</span></label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            <button type="submit" class="btn green" style="width:100%;">Login</button>
-        </form>
-        <p class="muted" style="margin-top:14px; text-align:center;">
-            Accounts are created by the Administrator or IT System Administrator.
-        </p>
-    </div>
+
+    <form method="post" action="<?php echo gars_url('login'); ?>" autocomplete="off">
+        <div class="form-group" style="margin-bottom:14px;">
+            <label for="username">Username <span class="req">*</span></label>
+            <input type="text" id="username" name="username" required
+                   value="<?php echo gars_e($username); ?>" autofocus>
+        </div>
+        <div class="form-group" style="margin-bottom:20px;">
+            <label for="password">Password <span class="req">*</span></label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <button type="submit" class="btn wide">Sign in</button>
+    </form>
+
+    <p class="muted" style="margin-top:16px; font-size:.9rem;">
+        Accounts are created by your Administrator or by the IT System Administrator.
+    </p>
 </div>
 <?php gars_footer(); ?>

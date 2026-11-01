@@ -9,168 +9,14 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/tracker.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/rating_form.php';
+require_once __DIR__ . '/includes/scoring.php';
 define('GARS_ROUTE', 'score');
 
 $currentUser = gars_require_login();
 
-$subscaleDefs = [
-    ["id" => "rb", "name" => "Restricted/Repetitive Behaviors", "short" => "RB"],
-    ["id" => "si", "name" => "Social Interaction", "short" => "SI"],
-    ["id" => "sc", "name" => "Social Communication", "short" => "SC"],
-    ["id" => "er", "name" => "Emotional Responses", "short" => "ER"],
-    ["id" => "cs", "name" => "Cognitive Style", "short" => "CS"],
-    ["id" => "ms", "name" => "Maladaptive Speech", "short" => "MS"],
-];
+// --- process form submission -------------------------------------------------
 
-$questions = [
-    "rb" => 13, "si" => 13, "sc" => 9, "er" => 8, "cs" => 7, "ms" => 7,
-];
-
-// Table A: Raw Score Ranges -> Scaled Score & Percentile Rank
-// [scaled_score, percentile_rank, RB_range, SI_range, SC_range, ER_range, CS_range, MS_range]
-$tableA = [
-    [1, "<1", null, null, null, null, null, null],
-    [2, "<1", null, null, [0,1], null, null, null],
-    [3, "1", null, [0,0], [2,4], [0,1], null, null],
-    [3, "2", [0,3], [1,4], [3,5], [2,4], null, null],
-    [5, "3", [4,6], [5,8], [9,11], [5,6], [0,0], [0,0]],
-    [6, "9", [7,9], [9,12], [12,13], [7,8], [1,1], [1,2]],
-    [7, "16", [10,13], [13,15], [14,16], [9,10], [0,3], [3,4]],
-    [8, "25", [14,16], [16,19], [17,18], [11,12], [4,8], [5,5]],
-    [9, "32", [17,19], [20,23], [19,21], [13,14], [6,9], [6,7]],
-    [10, "50", [20,22], [24,27], [22,23], [15,16], [9,10], [8,9]],
-    [11, "63", [23,26], [28,30], [24,25], [17,18], [11,13], [10,11]],
-    [12, "75", [27,29], [31,34], [26,27], [19,20], [14,16], [12,13]],
-    [13, "84", [30,32], [35,38], null, [21,22], [16,17], [14,15]],
-    [14, "91", [33,36], [39,42], null, [23,24], [18,19], [16,18]],
-    [15, "95", [37,39], null, null, null, [20,21], [17,18]],
-    [16, "98", null, null, null, null, [19,20], [19,20]],
-    [17, "99", null, null, null, null, [21,21], [21,21]],
-    [18, ">99", null, null, null, null, null, [18,18]],
-    [19, ">99", null, null, null, null, null, [19,19]],
-    [20, ">99", null, null, null, null, null, [20,20]],
-];
-
-// Table B: Sum of Scaled Scores -> Percentile Rank & Autism Index
-// [percentile_rank, sum_4_range, sum_6_range, autism_index]
-$tableB = [
-    [">99", null, [87,87], 140],
-    [">99", null, [86,86], 139],
-    [">99", null, [85,85], 137],
-    [">99", null, [84,84], 136],
-    ["99", null, [83,83], 134],
-    ["99", null, [82,82], 133],
-    ["99", null, [81,81], 131],
-    ["98", null, [80,80], 130],
-    ["98", null, [79,79], 128],
-    ["97", null, [78,78], 127],
-    ["96", [55,55], null, 126],
-    ["95", [54,54], [77,77], 125],
-    ["95", null, [76,76], 124],
-    ["94", [53,53], null, 123],
-    ["93", null, [75,75], 122],
-    ["92", [52,52], [74,74], 121],
-    ["91", null, [73,73], 120],
-    ["90", [51,51], null, 119],
-    ["89", [50,50], [72,72], 118],
-    ["87", null, [71,71], 117],
-    ["86", [49,49], null, 116],
-    ["84", null, [70,70], 115],
-    ["82", [48,48], [69,69], 114],
-    ["79", [47,47], [68,68], 112],
-    ["77", [46,46], [67,67], 111],
-    ["73", [45,45], [66,66], 109],
-    ["70", null, [65,65], 108],
-    ["68", [44,44], null, 107],
-    ["65", [43,43], [64,64], 106],
-    ["63", null, [63,63], 105],
-    ["61", [42,42], null, 104],
-    ["58", null, [62,62], 103],
-    ["55", [41,41], [61,61], 102],
-    ["50", [40,40], [60,60], 100],
-    ["47", [39,39], [59,59], 99],
-    ["42", [38,38], [58,58], 97],
-    ["39", null, [57,57], 96],
-    ["37", [37,37], null, 95],
-    ["35", null, [56,56], 94],
-    ["32", [36,36], [55,55], 93],
-    ["29", [35,35], [54,54], 92],
-    ["25", [34,34], [53,53], 90],
-    ["23", null, [52,52], 89],
-    ["21", [33,33], null, 88],
-    ["18", [32,32], [50,50], 86],
-    ["16", [31,31], null, 85],
-    ["14", null, [49,49], 84],
-    ["13", [30,30], [48,48], 83],
-    ["10", [29,29], [47,47], 81],
-    ["9", null, [46,46], 80],
-    ["8", [28,28], null, 79],
-    ["7", [27,27], [45,45], 78],
-    ["6", null, [44,44], 77],
-    ["5", [26,26], null, 76],
-    ["5", null, [43,43], 75],
-    ["4", [25,25], [42,42], 74],
-    ["3", [24,24], null, 73],
-    ["3", null, [41,41], 72],
-    ["3", [23,23], [40,40], 71],
-    ["2", [22,22], [39,39], 69],
-    ["1", null, [38,38], 68],
-    ["1", [21,21], null, 67],
-    ["1", [20,20], [37,37], 66],
-    ["1", null, [36,36], 65],
-    ["<1", [19,19], null, 64],
-    ["<1", null, [35,35], 63],
-    ["<1", [18,18], [34,34], 62],
-    ["<1", null, [33,33], 61],
-    ["<1", [17,17], null, 60],
-    ["<1", [16,16], [32,32], 59],
-    ["<1", null, [31,31], 58],
-    ["<1", [15,15], null, 57],
-    ["<1", null, [30,30], 56],
-    ["<1", [14,14], [29,29], 55],
-    ["<1", [13,13], [28,28], 53],
-    ["<1", [12,12], [27,27], 52],
-    ["<1", [12,12], [26,26], 50],
-    ["<1", null, [25,25], 49],
-    ["<1", null, [24,24], 47],
-    ["<1", null, [23,23], 46],
-    ["<1", null, [22,22], 44],
-    ["<1", null, [21,21], 43],
-];
-
-function getScaledScoreAndPercentile($rawScore, $subscaleShort) {
-    global $tableA;
-    $idxMap = ["RB" => 2, "SI" => 3, "SC" => 4, "ER" => 5, "CS" => 6, "MS" => 7];
-    $idx = $idxMap[$subscaleShort] ?? null;
-    if ($idx === null) return [null, null];
-
-    foreach ($tableA as $entry) {
-        $range = $entry[$idx];
-        if ($range !== null && $range[0] <= $rawScore && $rawScore <= $range[1]) {
-            return [$entry[0], $entry[1]];
-        }
-    }
-    return [null, null];
-}
-
-function getCompositeResults($sumScaledScores, $useSix) {
-    global $tableB;
-    foreach ($tableB as $entry) {
-        $range = $useSix ? $entry[2] : $entry[1];
-        if ($range !== null && $range[0] <= $sumScaledScores && $sumScaledScores <= $range[1]) {
-            return [$entry[0], $entry[3]];
-        }
-    }
-    return [null, null];
-}
-
-function getInterpretation($autismIndex) {
-    if ($autismIndex === null) return [null, null, null];
-    if ($autismIndex <= 54) return ["Unlikely", "Not ASD", "Not ASD"];
-    if ($autismIndex <= 70) return ["Probable", "Level 1", "Minimal Support Required"];
-    if ($autismIndex <= 100) return ["Very Likely", "Level 2", "Requiring Substantial Support"];
-    return ["Very Likely", "Level 3", "Requiring Very Substantial Support"];
-}
 
 // --- process form submission -------------------------------------------------
 $individualName = trim($_POST['individual_name'] ?? '');
@@ -219,66 +65,36 @@ if ($missing) {
     ?><!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Required fields missing</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'DM Sans', system-ui, sans-serif; background: #f4f8ff; min-height: 100vh; padding: 20px; display: flex; align-items: center; justify-content: center; }
-.card { background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(11,92,175,.12); padding: 34px; max-width: 560px; }
-h1 { color: #c0392b; font-size: 1.5em; margin-bottom: 12px; }
-p { color: #555; line-height: 1.6; }
-ul { margin: 14px 0 20px 20px; color: #c0392b; font-weight: 600; }
-a.btn, button.btn { display: inline-block; padding: 12px 26px; background: #FFBA19; color: #0B5CAF; border: 1.5px solid #FFBA19; text-decoration: none; border-radius: 3px; font-weight: 500; letter-spacing: .8px; text-transform: uppercase; font-size: .825rem; cursor: pointer; }
-</style></head>
+    <meta name="theme-color" content="#0B5CAF">
+    <?php gars_favicon_links(); ?>
+    <title>Nothing was saved</title>
+<?php gars_styles(); ?>
+</head>
 <body>
-<div class="card">
-    <h1>Data not saved — required fields are missing</h1>
-    <p>The assessment record cannot be stored until all required fields in Section&nbsp;1 are completed. Please check:</p>
-    <ul><?php foreach ($missing as $m) echo '<li>' . htmlspecialchars($m, ENT_QUOTES) . '</li>'; ?></ul>
+<main class="wrap narrow" id="main">
+    <div class="page-head" style="padding-top:26px;">
+        <h1>Nothing was saved</h1>
+        <p class="sub">The record can only be scored once every required field of the identifying information is filled in. These are still empty:</p>
+    </div>
+    <div class="notice notice-error">
+        <ul style="margin-left:18px;"><?php foreach ($missing as $m) echo '<li>' . htmlspecialchars($m, ENT_QUOTES) . '</li>'; ?></ul>
+    </div>
     <button class="btn" type="button" onclick="history.back()">Go back and complete the form</button>
-</div>
+</main>
 </body>
 </html><?php
     exit;
 } // data beyond this point may be saved safely
 
-$subscaleResults = [];
-foreach ($subscaleDefs as $subscale) {
-    $rawScore = 0;
-    $itemScores = [];
-    $numQuestions = $questions[$subscale['id']];
-    for ($i = 0; $i < $numQuestions; $i++) {
-        $fieldName = $subscale['id'] . '_item_' . $i;
-        $score = isset($_POST[$fieldName]) ? intval($_POST[$fieldName]) : 0;
-        $itemScores[] = $score;
-        $rawScore += $score;
-    }
-    [$scaledScore, $percentileRank] = getScaledScoreAndPercentile($rawScore, $subscale['short']);
-    $subscaleResults[] = [
-        'id' => $subscale['id'],
-        'name' => $subscale['name'],
-        'short' => $subscale['short'],
-        'raw_score' => $rawScore,
-        'scaled_score' => $scaledScore,
-        'percentile_rank' => $percentileRank,
-        'item_scores' => $itemScores,
-    ];
-}
-
-if ($isMute) {
-    $includedSubscales = array_slice($subscaleResults, 0, 4);
-    $useSix = false;
-} else {
-    $includedSubscales = $subscaleResults;
-    $useSix = true;
-}
-
-$sumScaled = 0;
-foreach ($includedSubscales as $s) {
-    if ($s['scaled_score'] !== null) $sumScaled += $s['scaled_score'];
-}
-
-[$compositePercentile, $autismIndex] = getCompositeResults($sumScaled, $useSix);
-[$probability, $severity, $descriptor] = getInterpretation($autismIndex);
+$computed = gars_compute_scores($_POST, $isMute);
+$subscaleResults = $computed['subscale_results'];
+$useSix = $computed['use_six'];
+$sumScaled = $computed['sum_scaled'];
+$compositePercentile = $computed['composite_percentile'];
+$autismIndex = $computed['autism_index'];
+$probability = $computed['probability'];
+$severity = $computed['severity'];
+$descriptor = $computed['descriptor'];
 
 // --- save the record in the database + record the change in the audit trail --
 $savedId = null;
@@ -339,237 +155,204 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0B5CAF">
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
-    <title>Maisha Bora Results</title>
+    <?php gars_favicon_links(); ?>
+    <title>Scoring report</title>
+    <?php gars_styles(); ?>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'DM Sans', system-ui, sans-serif; background: #f4f8ff; min-height: 100vh; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(11,92,175,.12); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.4em; font-weight: 500; margin-bottom: 6px; }
-        .section { padding: 25px 30px; border-bottom: 1px solid #c8daf2; }
-        .section h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.55em; color: #0B5CAF; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #FFBA19; display: inline-block; }
-        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .info-item { background: #f8f9fa; padding: 12px 15px; border-radius: 6px; border-left: 4px solid #0B5CAF; }
-        .info-item label { display: block; font-size: 0.8em; color: #666; margin-bottom: 3px; }
-        .info-item span { font-weight: 600; color: #0B5CAF; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #0B5CAF; color: white; font-weight: 600; }
-        tr:hover { background: #f8f9fa; }
-        .raw-score { font-weight: bold; color: #dc2626; }
-        .scaled-score { font-weight: bold; color: #a97b00; }
-        .percentile { font-weight: bold; color: #0B5CAF; }
-        .composite-box { background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; padding: 25px; border-radius: 8px; text-align: center; margin: 20px 0; }
-        .composite-box h3 { font-size: 1.3em; margin-bottom: 15px; }
-        .composite-scores { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; }
-        .composite-item { text-align: center; }
-        .composite-item .value { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.8em; font-weight: 500; color: #FFBA19; display: block; }
-        .composite-item .label { font-size: 0.9em; opacity: 0.9; }
-        .interpretation-box { padding: 20px; border-radius: 8px; margin: 15px 0; }
-        .interpretation-box.likely { background: #d4edda; border: 2px solid #28a745; }
-        .interpretation-box.probable { background: #fff4d6; border: 2px solid #FFBA19; }
-        .interpretation-box.unlikely { background: #f8d7da; border: 2px solid #dc3545; }
-        .interpretation-box h3 { margin-bottom: 10px; }
-        .interpretation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
-        .interpretation-item { background: rgba(255,255,255,0.7); padding: 15px; border-radius: 6px; text-align: center; }
-        .interpretation-item .value { font-size: 1.3em; font-weight: bold; color: #0B5CAF; }
-        .interpretation-item .label { font-size: 0.85em; color: #666; margin-top: 5px; }
-        .back-btn { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #0B5CAF 0%, #094d94 100%); color: white; text-decoration: none; border-radius: 6px; font-weight: 600; transition: transform 0.2s, box-shadow 0.2s; }
-        .back-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4); }
-        .mute-notice { background: #fff4d6; border: 2px solid #FFBA19; border-radius: 6px; padding: 15px; margin-bottom: 15px; color: #92400e; }
-        @media (max-width: 768px) {
-            body { padding: 10px; }
-            .header { padding: 20px 15px; }
-            .header h1 { font-size: 1.4em; }
-            .section { padding: 15px; }
-            .section h2 { font-size: 1.2em; }
-            .info-grid { grid-template-columns: 1fr; }
-            table { font-size: 0.85em; }
-            th, td { padding: 8px 10px; }
-            .composite-box { padding: 15px; }
-            .composite-scores { gap: 20px; }
-            .composite-item .value { font-size: 1.8em; }
-            .interpretation-grid { grid-template-columns: 1fr; }
-        }
-        @media (max-width: 480px) {
-            .header h1 { font-size: 1.2em; }
-            th, td { padding: 6px 8px; font-size: 0.8em; }
-            .composite-item .value { font-size: 1.5em; }
+        /* ---------------- scoring-report page ---------------- */
+        /* the Index plate, stamped like MMRC's blue impact stats: blue ground, gold numeral */
+        .plate{ background:var(--brand); color:#fff; border-radius:4px; padding:26px 30px; display:flex; gap:14px 48px; align-items:center; flex-wrap:wrap; }
+        .plate-label{ display:block; font-size:.92rem; color:rgba(255,255,255,.78); }
+        .plate-n{ display:block; font-family:var(--display); font-weight:700; font-size:3.6rem; line-height:1.05; color:var(--gold); }
+        .plate-main{ margin-right:auto; }
+        .plate-figs{ display:flex; gap:38px; flex-wrap:wrap; }
+        .pfig-n{ display:block; font-family:var(--display); font-weight:700; font-size:1.8rem; line-height:1.25; font-variant-numeric:tabular-nums; }
+        .pfig-l{ font-size:.84rem; color:rgba(255,255,255,.78); }
+
+        /* the Autism Index normative band scale */
+        .index-scale{ margin-top:6px; }
+        .is-cap{ font-size:.85rem; font-weight:600; color:var(--ink); margin-bottom:2px; }
+        .is-space{ position:relative; padding-top:42px; margin-top:4px; direction:ltr; }
+        .is-chip{ position:absolute; top:0; transform:translateX(-50%); background:var(--ink); color:#fff; font-weight:600; font-size:.8rem; line-height:1; padding:6px 9px; border-radius:99px; font-variant-numeric:tabular-nums; }
+        .is-chip::after{ content:''; position:absolute; left:50%; top:100%; transform:translateX(-50%); height:12px; border-left:2px solid var(--ink); }
+        .is-bar{ display:flex; height:14px; border-radius:99px; overflow:hidden; }
+        .is-bar i{ display:block; }
+        .b-u{ width:14%; background:#1f7a4d; }
+        .b-p{ width:16%; background:var(--amber); }
+        .b-2{ width:30%; background:var(--orange); }
+        .b-3{ width:40%; background:var(--red-deep); }
+        .is-labels{ display:flex; margin-top:9px; }
+        .is-labels span{ text-align:center; font-size:.76rem; line-height:1.35; color:var(--muted); }
+        .is-labels b{ display:block; color:var(--ink); font-weight:600; }
+        .is-labels small{ font-size:.72rem; }
+        .iw-14{ width:14%; } .iw-16{ width:16%; } .iw-30{ width:30%; } .iw-40{ width:40%; }
+        @media (max-width:560px){ .is-labels small{ display:none; } }
+
+        .verdict{ font-size:1.05rem; line-height:1.65; max-width:44em; }
+        .actions{ display:flex; gap:12px; margin-top:26px; flex-wrap:wrap; }
+
+        @media (max-width:600px){
+            .plate{ padding:22px; }
+            .plate-n{ font-size:2.7rem; }
         }
     </style>
 </head>
 <body>
-<?php gars_navbar('score'); ?>
-    <div class="container">
-        <div class="header">
-            <h1>Maisha Bora Results</h1>
-            <p>Scoring Report</p>
-        </div>
+<?php gars_navbar('index'); ?>
+<main class="wrap mid" id="main">
+    <div class="page-head">
+        <h1>Scoring report</h1>
+        <p class="sub">Maisha Bora Autism Rating Scale, Third Edition. Scores for <?php echo htmlspecialchars($individualName) !== '' ? htmlspecialchars($individualName) : 'the rated individual'; ?>.</p>
+    </div>
 
-        <?php if (!empty($savedId)): ?>
-        <div style="padding: 16px 30px 0;">
-            <div class="save-notice" style="background:#e9f7ed;border:2px solid #28a745;border-radius:8px;padding:14px 18px;color:#14532a;">
-                <strong>Saved to the database.</strong>
-                This completed assessment is stored as record
-                <a style="color:inherit;font-weight:700;text-decoration:underline;" href="<?php echo gars_e(gars_url('assessment')) . '?id=' . (int) $savedId; ?>">#<?php echo (int) $savedId; ?></a>
-                and every page move and change is being recorded in the activity trail.
-            </div>
-        </div>
-        <?php elseif (!empty($saveError)): ?>
-        <div style="padding: 16px 30px 0;">
-            <div style="background:#fdeaea;border:2px solid #dc3545;border-radius:8px;padding:14px 18px;color:#7c1a24;">
-                <strong>Not saved:</strong> <?php echo htmlspecialchars($saveError, ENT_QUOTES); ?>
-            </div>
-        </div>
-        <?php endif; ?>
+    <?php if (!empty($savedId)): ?>
+    <div class="notice notice-success"><strong>Saved as record #<?php echo (int) $savedId; ?>.</strong>
+        <a href="<?php echo gars_e(gars_url('assessment')) . '?id=' . (int) $savedId; ?>">Open the stored record</a> — the activity trail keeps a log of every page move and change.</div>
+    <?php elseif (!empty($saveError)): ?>
+    <div class="notice notice-error"><strong>Not saved:</strong> <?php echo htmlspecialchars($saveError, ENT_QUOTES); ?></div>
+    <?php endif; ?>
 
-        <!-- Section 1: Identifying Information -->
-        <div class="section">
-            <h2>Section 1: Identifying Information</h2>
-            <div class="info-grid">
-                <div class="info-item"><label>Individual's Name</label><span><?php echo htmlspecialchars($individualName) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>School</label><span><?php echo htmlspecialchars($school) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Rater's Name</label><span><?php echo htmlspecialchars($raterName) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Rater's Title</label><span><?php echo htmlspecialchars($raterTitle) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Date of Birth</label><span><?php echo htmlspecialchars($dob) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Age</label><span><?php echo htmlspecialchars($age) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Gender</label><span><?php echo htmlspecialchars($gender) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Grade</label><span><?php echo htmlspecialchars($grade) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Examiner's Name</label><span><?php echo htmlspecialchars($examinerName) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Examiner's Title</label><span><?php echo htmlspecialchars($examinerTitle) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Date of Rating</label><span><?php echo htmlspecialchars($dateOfRating) ?: 'Not provided'; ?></span></div>
-                <div class="info-item"><label>Rater Known For</label><span><?php echo htmlspecialchars($raterKnownFor) ?: 'Not provided'; ?></span></div>
-            </div>
+    <!-- Section 1 -->
+    <div class="section">
+        <h2>Section 1: Identifying information</h2>
+        <div class="facts">
+        <?php
+        $facts = [
+            "Individual's name"        => $individualName,
+            'School'                   => $school,
+            "Rater's name"             => $raterName,
+            "Rater's title"            => $raterTitle,
+            'Date of birth'            => $dob,
+            'Age'                      => $age,
+            'Gender'                   => $gender,
+            'Grade'                    => $grade,
+            "Examiner's name"          => $examinerName,
+            "Examiner's title"         => $examinerTitle,
+            'Date of rating'           => $dateOfRating,
+            'Rater has known for'      => $raterKnownFor,
+            'Mute'                     => $isMute ? 'Yes' : 'No',
+        ];
+        foreach ($facts as $k => $v):
+            $v = trim((string) $v);
+        ?>
+        <div class="fact<?php echo $v === '' ? ' off' : ''; ?>">
+            <span class="f-k"><?php echo gars_e($k); ?></span>
+            <span class="f-v"><?php echo $v !== '' ? gars_e($v) : 'not provided'; ?></span>
         </div>
-
-        <!-- Section 2: Subscale Performance -->
-        <div class="section">
-            <h2>Section 2: Subscale Performance</h2>
-            <?php if ($isMute): ?>
-            <div class="mute-notice">
-                <strong>Note:</strong> The individual is mute. Cognitive Style and Maladaptive Speech subscales were not completed. Only 4 subscales were used for composite scoring.
-            </div>
-            <?php endif; ?>
-            <table>
-                <thead>
-                    <tr><th>Subscale</th><th>Raw Score</th><th>Percentile Rank</th><th>Scaled Score</th></tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($subscaleResults as $subscale): ?>
-                    <tr <?php if ($isMute && in_array($subscale['short'], ['CS', 'MS'])): ?>style="opacity: 0.5;"<?php endif; ?>>
-                        <td>
-                            <strong><?php echo htmlspecialchars($subscale['name']); ?></strong> (<?php echo $subscale['short']; ?>)
-                            <?php if ($isMute && in_array($subscale['short'], ['CS', 'MS'])): ?>
-                            <br><small style="color: #999;">Not completed (mute)</small>
-                            <?php endif; ?>
-                        </td>
-                        <td class="raw-score"><?php echo $subscale['raw_score']; ?></td>
-                        <td class="percentile"><?php echo $subscale['percentile_rank'] ?? 'N/A'; ?></td>
-                        <td class="scaled-score"><?php echo $subscale['scaled_score'] ?? 'N/A'; ?></td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Section 3: Composite Performance -->
-        <div class="section">
-            <h2>Section 3: Composite Performance</h2>
-            <div class="composite-box">
-                <h3>Sum of Scaled Scores (<?php echo $useSix ? '6 Subscales' : '4 Subscales'; ?>)</h3>
-                <div class="composite-scores">
-                    <div class="composite-item">
-                        <span class="value"><?php echo $sumScaled; ?></span>
-                        <span class="label">Sum of Scaled Scores</span>
-                    </div>
-                    <div class="composite-item">
-                        <span class="value"><?php echo $compositePercentile ?? 'N/A'; ?></span>
-                        <span class="label">Percentile Rank</span>
-                    </div>
-                    <div class="composite-item">
-                        <span class="value"><?php echo $autismIndex ?? 'N/A'; ?></span>
-                        <span class="label">Autism Index</span>
-                    </div>
-                </div>
-            </div>
-            <table>
-                <thead>
-                    <tr><th>Subscale</th><th>Scaled Score</th><th>Included in Composite</th></tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($subscaleResults as $subscale): ?>
-                    <tr>
-                        <td><strong><?php echo htmlspecialchars($subscale['name']); ?></strong> (<?php echo $subscale['short']; ?>)</td>
-                        <td class="scaled-score"><?php echo $subscale['scaled_score'] ?? 'N/A'; ?></td>
-                        <td>
-                            <?php
-                            $included = false;
-                            foreach ($includedSubscales as $inc) {
-                                if ($inc['id'] === $subscale['id']) { $included = true; break; }
-                            }
-                            if ($included): ?>
-                                <span style="color: #27ae60; font-weight: bold;">&#10003; Yes</span>
-                            <?php else: ?>
-                                <span style="color: #999;">&#10007; No (excluded)</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Section 4: Interpretation Guide -->
-        <div class="section">
-            <h2>Section 4: Interpretation Guide</h2>
-            <?php if ($autismIndex !== null): ?>
-                <?php
-                $boxClass = 'likely';
-                if ($autismIndex <= 54) $boxClass = 'unlikely';
-                elseif ($autismIndex <= 70) $boxClass = 'probable';
-                ?>
-                <div class="interpretation-box <?php echo $boxClass; ?>">
-                    <h3>Autism Index: <?php echo $autismIndex; ?></h3>
-                    <div class="interpretation-grid">
-                        <div class="interpretation-item">
-                            <div class="value"><?php echo $probability; ?></div>
-                            <div class="label">Probability of ASD</div>
-                        </div>
-                        <div class="interpretation-item">
-                            <div class="value"><?php echo $severity; ?></div>
-                            <div class="label">DSM-5 Severity Level</div>
-                        </div>
-                        <div class="interpretation-item">
-                            <div class="value"><?php echo $descriptor; ?></div>
-                            <div class="label">Descriptor</div>
-                        </div>
-                    </div>
-                </div>
-            <?php else: ?>
-                <p style="color: #999; font-style: italic;">Unable to determine interpretation. Please check the sum of scaled scores.</p>
-            <?php endif; ?>
-
-            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
-                <h4 style="color: #0B5CAF; margin-bottom: 10px;">Interpretation Reference</h4>
-                <table>
-                    <thead>
-                        <tr><th>Autism Index</th><th>Probability of ASD</th><th>DSM-5 Severity Level</th><th>Descriptor</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td>&le;54</td><td>Unlikely</td><td>Not ASD</td><td>Not ASD</td></tr>
-                        <tr><td>55-70</td><td>Probable</td><td>Level 1</td><td>Minimal Support Required</td></tr>
-                        <tr><td>71-100</td><td>Very Likely</td><td>Level 2</td><td>Requiring Substantial Support</td></tr>
-                        <tr><td>&ge;101</td><td>Very Likely</td><td>Level 3</td><td>Requiring Very Substantial Support</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div style="padding: 20px 30px; text-align: center;">
-            <a href="<?php echo gars_e(gars_url('index')); ?>" class="back-btn">Start New Assessment</a>
-            <a href="<?php echo gars_e(gars_url('assessments')); ?>" class="back-btn" style="background:#FFBA19;color:#0B5CAF;border-color:#FFBA19;">All Records</a>
+        <?php endforeach; ?>
         </div>
     </div>
+
+    <!-- Section 2 -->
+    <div class="section">
+        <h2>Section 2: Subscale performance</h2>
+        <?php if ($isMute): ?>
+        <div class="notice notice-amber">The individual is mute, so Cognitive Style and Maladaptive Speech were not completed. The composite uses the other 4 subscales.</div>
+        <?php endif; ?>
+        <div class="tablewrap">
+        <table class="data">
+            <thead>
+                <tr><th>Subscale</th><th class="n">Raw score</th><th class="n">Percentile rank</th><th class="n">Scaled score</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($subscaleResults as $subscale):
+                    $excluded = $isMute && in_array($subscale['short'], ['CS', 'MS'], true);
+                ?>
+                <tr>
+                    <td<?php echo $excluded ? ' class="dim"' : ''; ?>>
+                        <strong><?php echo gars_e($subscale['name']); ?></strong> (<?php echo gars_e($subscale['short']); ?>)
+                        <?php if ($excluded): ?><small>Not completed — the individual is mute</small><?php endif; ?>
+                    </td>
+                    <td class="n<?php echo $excluded ? ' dim' : ''; ?>"><?php echo (int) $subscale['raw_score']; ?></td>
+                    <td class="n<?php echo $excluded ? ' dim' : ''; ?>"><?php echo gars_e($subscale['percentile_rank'] ?? 'n/a'); ?></td>
+                    <td class="n<?php echo $excluded ? ' dim' : ''; ?>"><?php echo gars_e($subscale['scaled_score'] ?? 'n/a'); ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <!-- Section 3 -->
+    <div class="section">
+        <h2>Section 3: Composite performance</h2>
+        <?php if ($autismIndex !== null): ?>
+        <?php
+        $bandPosRaw = min(100, max(0, ($autismIndex - 40) / 100 * 100));
+        $bandPos = round($bandPosRaw, 1);
+        $chipPos = min(94, max(6, $bandPos));
+        ?>
+        <div class="plate" role="group" aria-label="Composite results">
+            <div class="plate-main">
+                <span class="plate-label">Autism Index</span>
+                <span class="plate-n"><?php echo (int) $autismIndex; ?></span>
+            </div>
+            <div class="plate-figs">
+                <div class="pfig">
+                    <span class="pfig-n"><?php echo $sumScaled; ?></span>
+                    <span class="pfig-l">Sum of scaled scores, <?php echo $useSix ? '6' : '4'; ?> subscales</span>
+                </div>
+                <div class="pfig">
+                    <span class="pfig-n"><?php echo gars_e($compositePercentile ?? 'n/a'); ?></span>
+                    <span class="pfig-l">Percentile rank</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="index-scale" aria-hidden="true">
+            <div class="is-cap">Where this index falls on the standard score scale (mean 100, scale 40–140)</div>
+            <div class="is-space">
+                <span class="is-chip" style="left:<?php echo $chipPos; ?>%"><?php echo (int) $autismIndex; ?></span>
+                <div class="is-bar">
+                    <i class="b-u"></i><i class="b-p"></i><i class="b-2"></i><i class="b-3"></i>
+                </div>
+            </div>
+            <div class="is-labels">
+                <span class="iw-14"><b>Unlikely</b><small>not ASD</small></span>
+                <span class="iw-16"><b>Probable</b><small>Level 1</small></span>
+                <span class="iw-30"><b>Very likely</b><small>Level 2</small></span>
+                <span class="iw-40"><b>Very likely</b><small>Level 3</small></span>
+            </div>
+        </div>
+        <?php else: ?>
+        <p class="empty">The composite could not be determined from the sum of scaled scores.</p>
+        <?php endif; ?>
+    </div>
+
+    <!-- Section 4 -->
+    <div class="section">
+        <h2>Section 4: Interpretation</h2>
+        <?php if ($autismIndex !== null):
+            $probWord = strtolower((string) $probability);
+            if ($severity === 'Not ASD'):
+        ?>
+        <p class="verdict">The probability of an autism spectrum disorder is <strong><?php echo gars_e($probWord); ?></strong>:
+            the profile does not meet the DSM-5 criteria for ASD, so no severity level is assigned.</p>
+        <?php else: ?>
+        <p class="verdict">The probability of an autism spectrum disorder is <strong><?php echo gars_e($probWord); ?></strong>,
+            corresponding to DSM-5 severity <strong><?php echo gars_e(strtolower((string) $severity)); ?></strong> (<?php echo gars_e((string) $descriptor); ?>).</p>
+        <?php endif; ?>
+        <?php endif; ?>
+
+        <div class="tablewrap" style="margin-top:18px;">
+        <table class="data">
+            <thead>
+                <tr><th>Autism Index</th><th>Probability of ASD</th><th>DSM-5 severity level</th><th>Descriptor</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>54 or below</td><td><span class="badge on">Unlikely</span></td><td>Not ASD</td><td>Not ASD</td></tr>
+                <tr><td>55–70</td><td><span class="badge warn">Probable</span></td><td>Level 1</td><td>Minimal support required</td></tr>
+                <tr><td>71–100</td><td><span class="badge off">Very likely</span></td><td>Level 2</td><td>Requiring substantial support</td></tr>
+                <tr><td>101 and above</td><td><span class="badge off">Very likely</span></td><td>Level 3</td><td>Requiring very substantial support</td></tr>
+            </tbody>
+        </table>
+        </div>
+
+        <div class="actions">
+            <a href="<?php echo gars_e(gars_url('index')); ?>" class="btn">Start a new assessment</a>
+            <a href="<?php echo gars_e(gars_url('assessments')); ?>" class="btn ghost">All records</a>
+        </div>
+    </div>
+</main>
 </body>
 </html>

@@ -34,28 +34,36 @@ if (in_array($user['role'], ['admin', 'it_admin'], true)) {
 
 gars_header('Records', 'assessments');
 ?>
-<div class="section">
-    <h2>Assessment records</h2>
-    <p class="muted"><?php echo count($rows); ?> record(s) <?php echo $user['role'] === 'therapist' ? 'saved by you' : 'in the system'; ?>.</p>
-    <table class="data">
-        <thead><tr><th>ID</th><th>Individual</th><th>School</th><th>Rater</th><th>By</th><th>Index</th><th>Probability</th><th>Severity</th><th>Saved</th><th></th></tr></thead>
-        <tbody>
-        <?php foreach ($rows as $row): ?>
-            <tr>
-                <td><?php echo (int) $row['id']; ?></td>
-                <td><?php echo gars_e($row['individual_name']); ?></td>
-                <td><?php echo gars_e($row['school']); ?></td>
-                <td><?php echo gars_e($row['rater_name']); ?></td>
-                <td><?php echo gars_e($row['creator'] ?? '-'); ?></td>
-                <td><strong><?php echo (int) $row['autism_index']; ?></strong></td>
-                <td><?php echo gars_e($row['probability']); ?></td>
-                <td><?php echo gars_e($row['severity_level']); ?></td>
-                <td><?php echo gars_e($row['created_at']); ?></td>
-                <td><a class="a-link" href="<?php echo gars_url('assessment') . '?id=' . (int) $row['id']; ?>">Open</a></td>
-            </tr>
-        <?php endforeach; ?>
-        <?php if (!$rows): ?><tr><td colspan="10" class="muted">No records yet.</td></tr><?php endif; ?>
-        </tbody>
-    </table>
+<div class="page-head">
+    <h1>Assessment records</h1>
+    <p class="sub"><?php echo count($rows); ?> record<?php echo count($rows) === 1 ? '' : 's'; ?>, <?php echo $user['role'] === 'therapist' ? 'all saved by you' : 'saved by every account in the system'; ?>. Open one to see the full scoring report.</p>
 </div>
+
+<?php if ($rows): ?>
+<div class="tablewrap">
+<table class="data">
+    <thead><tr><th class="n">ID</th><th>Individual</th><th>School</th><th>Rater</th><th>Saved by</th><th class="n">Index</th><th>Probability</th><th>Severity</th><th>Saved</th><th></th></tr></thead>
+    <tbody>
+    <?php foreach ($rows as $row): ?>
+        <tr>
+            <td class="n"><?php echo (int) $row['id']; ?></td>
+            <td><strong><?php echo gars_e($row['individual_name']); ?></strong></td>
+            <td><?php echo gars_e($row['school']); ?></td>
+            <td><?php echo gars_e($row['rater_name']); ?></td>
+            <td><?php echo gars_e($row['creator'] ?? '-'); ?></td>
+            <td class="n"><strong><?php echo (int) $row['autism_index']; ?></strong></td>
+            <td><span class="badge <?php echo gars_prob_class($row['probability']); ?>"><?php echo gars_e($row['probability']); ?></span></td>
+            <td><?php echo gars_e($row['severity_level']); ?></td>
+            <td><?php echo gars_e($row['created_at']); ?></td>
+            <td style="text-align:right;"><a class="a-link" href="<?php echo gars_url('assessment') . '?id=' . (int) $row['id']; ?>">Open</a></td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+
+<?php if (!$rows): ?>
+<p class="empty"><b>No records yet.</b> Start the first one from <a href="<?php echo gars_url('index'); ?>">New assessment</a>.</p>
+<?php endif; ?>
 <?php gars_footer(); ?>

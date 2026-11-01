@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     );
 
     if ($missing) {
-        $error = 'Data cannot be saved — required fields missing: ' . implode(', ', $missing) . '.';
+        $error = 'Nothing was saved — these required fields are missing: ' . implode(', ', $missing) . '.';
     } elseif (!preg_match('/^[a-zA-Z0-9._-]{3,60}$/', $posted['new_username'])) {
         $error = 'Username must be 3–60 characters (letters, numbers, dots, dashes).';
     } elseif (strlen($posted['new_password']) < 8) {
@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'register',
                 'Created ' . $posted['role'] . " \"{$posted['new_username']}\" (user #$id)"
             );
-            gars_flash('User "' . $posted['new_username'] . '" created as ' . gars_role_label($posted['role']) . '.');
+            gars_flash($posted['new_username'] . ' was created as ' . gars_role_label($posted['role']) . '.');
             gars_track_page('page_visit', 'User management');
             gars_redirect(gars_url('register'));
         } catch (RuntimeException $e) {
@@ -74,69 +74,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 gars_track_page('page_visit', 'User management');
 
 gars_header('Create user', 'register');
+
+function gars_role_select(array $roles, string $selected): void
+{
+    ?>
+    <select id="role" name="role" required>
+        <option value="">Select a role</option>
+        <?php foreach ($roles as $value => $label): ?>
+            <option value="<?php echo gars_e($value); ?>" <?php echo $selected === $value ? 'selected' : ''; ?>>
+                <?php echo gars_e($label); ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+    <?php
+}
 ?>
-<div class="section">
-    <h2>Create user account</h2>
-    <?php if ($error): ?><div class="notice notice-error"><?php echo gars_e($error); ?></div><?php endif; ?>
-    <form method="post" action="<?php echo gars_url('register'); ?>" autocomplete="off">
-        <div class="form-row">
-            <div class="form-group">
-                <label for="new_username">Username <span class="req">*</span></label>
-                <input type="text" id="new_username" name="new_username" required
-                       value="<?php echo gars_e($posted['new_username'] ?? ''); ?>">
-            </div>
-            <div class="form-group">
-                <label for="full_name">Full name <span class="req">*</span></label>
-                <input type="text" id="full_name" name="full_name" required
-                       value="<?php echo gars_e($posted['full_name'] ?? ''); ?>">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="email">Email (optional)</label>
-                <input type="email" id="email" name="email" value="<?php echo gars_e($posted['email'] ?? ''); ?>">
-            </div>
-            <div class="form-group">
-                <label for="role">Role <span class="req">*</span></label>
-                <select id="role" name="role" required>
-                    <option value="">— Select role —</option>
-                    <?php foreach (gars_roles() as $value => $label): ?>
-                        <option value="<?php echo gars_e($value); ?>" <?php echo ($posted['role'] ?? '') === $value ? 'selected' : ''; ?>>
-                            <?php echo gars_e($label); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="new_password">Password <span class="req">*</span> <span class="muted">(min 8 characters)</span></label>
-                <input type="password" id="new_password" name="new_password" minlength="8" required>
-            </div>
-            <div class="form-group">
-                <label for="confirm">Confirm password <span class="req">*</span></label>
-                <input type="password" id="confirm" name="confirm" minlength="8" required>
-            </div>
-        </div>
-        <button type="submit" class="btn green">Create user</button>
-    </form>
+<div class="page-head">
+    <h1>Create a user account</h1>
+    <p class="sub">New accounts can sign in and save assessment records. Passwords are stored only as hashes.</p>
 </div>
 
-<div class="section">
-    <h2>Existing accounts</h2>
-    <table class="data">
-        <thead><tr><th>User</th><th>Full name</th><th>Role</th><th>Status</th><th>Last login</th></tr></thead>
-        <tbody>
-        <?php foreach (gars_db()->query('SELECT username, full_name, role, is_active, last_login_at FROM users ORDER BY role, username') as $row): ?>
-            <tr>
-                <td><?php echo gars_e($row['username']); ?></td>
-                <td><?php echo gars_e($row['full_name']); ?></td>
-                <td><span class="badge <?php echo gars_e($row['role']); ?>"><?php echo gars_e(gars_role_label($row['role'])); ?></span></td>
-                <td><span class="badge <?php echo $row['is_active'] ? 'on' : 'off'; ?>"><?php echo $row['is_active'] ? 'Active' : 'Disabled'; ?></span></td>
-                <td><?php echo $row['last_login_at'] ? gars_e($row['last_login_at']) : 'never'; ?></td>
-            </tr>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
+<div class="sheet">
+
+    <div class="section" style="border-top:none;">
+        <?php if ($error): ?><div class="notice notice-error"><?php echo gars_e($error); ?></div><?php endif; ?>
+        <form method="post" action="<?php echo gars_url('register'); ?>" autocomplete="off">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="new_username">Username <span class="req">*</span></label>
+                    <input type="text" id="new_username" name="new_username" required
+                           value="<?php echo gars_e($posted['new_username'] ?? ''); ?>">
+                </div>
+                <div class="form-group">
+                    <label for="full_name">Full name <span class="req">*</span></label>
+                    <input type="text" id="full_name" name="full_name" required
+                           value="<?php echo gars_e($posted['full_name'] ?? ''); ?>">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="email">Email (optional)</label>
+                    <input type="email" id="email" name="email" value="<?php echo gars_e($posted['email'] ?? ''); ?>">
+                </div>
+                <div class="form-group">
+                    <label for="role">Role <span class="req">*</span></label>
+                    <?php gars_role_select(gars_roles(), $posted['role'] ?? ''); ?>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="new_password">Password <span class="req">*</span> <span class="muted" style="font-weight:400;">(at least 8 characters)</span></label>
+                    <input type="password" id="new_password" name="new_password" minlength="8" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirm">Confirm password <span class="req">*</span></label>
+                    <input type="password" id="confirm" name="confirm" minlength="8" required>
+                </div>
+            </div>
+            <button type="submit" class="btn">Create user</button>
+        </form>
+    </div>
+
+    <div class="section">
+        <h2>Existing accounts</h2>
+        <div class="tablewrap">
+        <table class="data">
+            <thead><tr><th>User</th><th>Full name</th><th>Role</th><th>Status</th><th>Last login</th></tr></thead>
+            <tbody>
+            <?php foreach (gars_db()->query('SELECT username, full_name, role, is_active, last_login_at FROM users ORDER BY role, username') as $row): ?>
+                <tr>
+                    <td><?php echo gars_e($row['username']); ?></td>
+                    <td><?php echo gars_e($row['full_name']); ?></td>
+                    <td><span class="badge <?php echo gars_e($row['role']); ?>"><?php echo gars_e(gars_role_label($row['role'])); ?></span></td>
+                    <td><span class="badge <?php echo $row['is_active'] ? 'on' : 'off'; ?>"><?php echo $row['is_active'] ? 'Active' : 'Disabled'; ?></span></td>
+                    <td class="n"><?php echo $row['last_login_at'] ? gars_e($row['last_login_at']) : 'never'; ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+    </div>
 </div>
 <?php gars_footer(); ?>

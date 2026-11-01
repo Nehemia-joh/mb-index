@@ -39,6 +39,7 @@ $routes = [
     'records'    => 'assessments.php',
     'assessments'=> 'assessments.php',
     'assessment' => 'assessment.php',
+    'edit'       => 'edit.php',
     'setup'      => 'setup.php',
 ];
 
@@ -47,6 +48,21 @@ $routes = [
 if (!defined('GARS_APP_ROOT')) { /* unreachable, keeps IDEs calm */ }
 
 $requested = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+
+// Serve real static files directly (favicon, images, downloads) — mirrors the
+// .htaccess "existing files are served as-is" rule, and lets `php -S route.php`
+// serve them too. Must run on the raw path, before the mount-point strip below
+// (under `php -S`, SCRIPT_NAME is the requested path itself).
+if ($requested !== '/' && str_contains($requested, '.')) {
+    $static = realpath(GARS_APP_ROOT . '/' . ltrim($requested, '/'));
+    if ($static !== false
+        && str_starts_with($static, GARS_APP_ROOT . '/')
+        && is_file($static)
+        && !str_ends_with(strtolower($static), '.php')) {
+        return false; // let the web server serve the file itself
+    }
+}
+
 $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/'));
 if ($scriptDir !== '/' && str_starts_with($requested, rtrim($scriptDir, '/'))) {
     $requested = substr($requested, strlen(rtrim($scriptDir, '/')));
@@ -73,12 +89,18 @@ if ($target !== null && in_array(strtolower(pathinfo($target, PATHINFO_FILENAME)
 
 if ($target === null) {
     http_response_code(404);
+    $docRoot = rtrim(str_replace('\\', '/', $_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    $appBase = $docRoot !== '' && str_starts_with(GARS_APP_ROOT, $docRoot)
+        ? rtrim(substr(GARS_APP_ROOT, strlen($docRoot)), '/')
+        : '';
     ?><!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Page not found</title>
+    <link rel="icon" href="<?php echo $appBase; ?>/static/favicon.ico" sizes="32x32">
+    <link rel="icon" href="<?php echo $appBase; ?>/static/favicon.svg" type="image/svg+xml">
     <style>body{font-family:'DM Sans',system-ui,sans-serif;background:#f4f8ff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{background:#fff;border-radius:12px;padding:40px;max-width:520px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}h1{color:#0B5CAF}p{color:#666;margin:12px 0}a{color:#0B5CAF;font-weight:600;text-decoration:none}</style></head>
     <body><div class="card"><h1>404 — Page not found</h1>
     <p>No page is mapped to <strong>/<?php echo htmlspecialchars($requested === '/' ? '' : $requested, ENT_QUOTES); ?></strong>.</p>
-    <a href="<?php echo $scriptDir === '/' ? '/' : rtrim($scriptDir, '/') . '/'; ?>">Go to the homepage</a></div></body></html><?php
+    <a href="<?php echo $appBase === '' ? '/' : $appBase . '/'; ?>">Go to the homepage</a></div></body></html><?php
     exit;
 }
 

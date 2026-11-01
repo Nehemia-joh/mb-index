@@ -7,6 +7,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/tracker.php';
 require_once __DIR__ . '/includes/ui.php';
 define('GARS_ROUTE', 'admin');
 
@@ -27,55 +28,69 @@ $records = $db->query(
 
 gars_header('Admin', 'admin');
 ?>
-<div class="section">
-    <h2>Administrator dashboard</h2>
-    <div class="grid">
-        <div class="card"><strong>Users:</strong> <?php echo $stats['users']; ?></div>
-        <div class="card"><strong>Assessment records:</strong> <?php echo $stats['assessments']; ?></div>
-        <div class="card"><strong>Active login sessions:</strong> <?php echo $stats['active']; ?></div>
-        <div class="card"><strong>Activity entries:</strong> <?php echo $stats['activities']; ?></div>
-    </div>
-    <p style="margin-top:18px;">
-        <a class="btn green" href="<?php echo gars_url('register'); ?>">Create user</a>
-        <a class="btn" href="<?php echo gars_url('itadmin'); ?>">IT admin view</a>
-    </p>
+<div class="page-head">
+    <h1>Administrator dashboard</h1>
+    <p class="sub">Accounts, records and the activity trail across the whole system.</p>
 </div>
+
+<div class="stats">
+    <div class="stat"><span class="s-n"><?php echo $stats['users']; ?></span><span class="s-l">User accounts</span></div>
+    <div class="stat"><span class="s-n"><?php echo $stats['assessments']; ?></span><span class="s-l">Assessment records</span></div>
+    <div class="stat"><span class="s-n"><?php echo $stats['active']; ?></span><span class="s-l">Active login sessions</span></div>
+    <div class="stat"><span class="s-n"><?php echo $stats['activities']; ?></span><span class="s-l">Activity entries</span></div>
+</div>
+
 <div class="section">
-    <h2>Latest assessment records (25)</h2>
+    <div class="actions" style="margin-top:0;">
+        <a class="btn" href="<?php echo gars_url('register'); ?>">Create user</a>
+        <a class="btn ghost" href="<?php echo gars_url('itadmin'); ?>">IT admin view</a>
+    </div>
+</div>
+
+<div class="section">
+    <h2>Latest assessment records</h2>
+    <?php if ($records): ?>
+    <div class="tablewrap">
     <table class="data">
-        <thead><tr><th>ID</th><th>Individual</th><th>School</th><th>By</th><th>Index</th><th>Probability</th><th>Saved</th></tr></thead>
+        <thead><tr><th class="n">ID</th><th>Individual</th><th>School</th><th>Saved by</th><th class="n">Index</th><th>Probability</th><th>Saved</th></tr></thead>
         <tbody>
         <?php foreach ($records as $row): ?>
             <tr>
-                <td><a class="a-link" href="<?php echo gars_url('assessment') . '?id=' . (int) $row['id']; ?>">#<?php echo (int) $row['id']; ?></a></td>
-                <td><?php echo gars_e($row['individual_name']); ?></td>
+                <td class="n"><a class="a-link" href="<?php echo gars_url('assessment') . '?id=' . (int) $row['id']; ?>">#<?php echo (int) $row['id']; ?></a></td>
+                <td><strong><?php echo gars_e($row['individual_name']); ?></strong></td>
                 <td><?php echo gars_e($row['school']); ?></td>
                 <td><?php echo gars_e($row['creator'] ?? '-'); ?></td>
-                <td><strong><?php echo (int) $row['autism_index']; ?></strong></td>
-                <td><?php echo gars_e($row['probability']); ?></td>
+                <td class="n"><strong><?php echo (int) $row['autism_index']; ?></strong></td>
+                <td><span class="badge <?php echo gars_prob_class($row['probability']); ?>"><?php echo gars_e($row['probability']); ?></span></td>
                 <td><?php echo gars_e($row['created_at']); ?></td>
             </tr>
         <?php endforeach; ?>
-        <?php if (!$records): ?><tr><td colspan="7" class="muted">No records yet.</td></tr><?php endif; ?>
         </tbody>
     </table>
+    </div>
+    <?php else: ?>
+    <p class="empty"><b>No records yet.</b> Records appear here as soon as an assessment is scored.</p>
+    <?php endif; ?>
 </div>
+
 <div class="section">
-    <h2>Recent activity (change trail)</h2>
+    <h2>Recent activity</h2>
+    <div class="tablewrap">
     <table class="data">
         <thead><tr><th>When</th><th>User</th><th>Role</th><th>Action</th><th>Page</th><th>Details</th></tr></thead>
         <tbody>
         <?php foreach ($db->query('SELECT * FROM activity_logs ORDER BY created_at DESC, id DESC LIMIT 25') as $row): ?>
             <tr>
                 <td><?php echo gars_e($row['created_at']); ?></td>
-                <td><?php echo gars_e($row['username'] ?? 'guest'); ?></td>
+                <td><strong><?php echo gars_e($row['username'] ?? 'guest'); ?></strong></td>
                 <td><?php echo $row['role'] ? '<span class="badge ' . gars_e($row['role']) . '">' . gars_e(gars_role_label($row['role'])) . '</span>' : '-'; ?></td>
-                <td><strong><?php echo gars_e($row['action']); ?></strong></td>
+                <td><?php echo gars_e($row['action']); ?></td>
                 <td><?php echo gars_e($row['page'] ?? '-'); ?></td>
                 <td class="muted"><?php echo gars_e($row['details'] ?? ''); ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
 </div>
 <?php gars_footer(); ?>
