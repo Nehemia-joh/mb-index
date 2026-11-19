@@ -104,6 +104,20 @@ function gars_setup_tables(PDO $db): void
             KEY idx_assess_creator (created_by),
             KEY idx_assess_date (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS scoring_revisions (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            kind ENUM('table_a','table_b','interpretation') NOT NULL,
+            payload LONGTEXT NOT NULL,
+            change_note TEXT DEFAULT NULL,
+            status ENUM('pending','approved','rejected','superseded') NOT NULL DEFAULT 'pending',
+            created_by INT UNSIGNED NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            decided_by INT UNSIGNED DEFAULT NULL,
+            decided_at DATETIME DEFAULT NULL,
+            KEY idx_scoring_kind_status (kind, status),
+            CONSTRAINT fk_scoring_creator FOREIGN KEY (created_by) REFERENCES users(id),
+            CONSTRAINT fk_scoring_decider FOREIGN KEY (decided_by) REFERENCES users(id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($ddl as $sql) {
         $db->exec($sql);
@@ -135,7 +149,7 @@ if (gars_find_user(DEFAULT_ADMIN_USER) === null) {
 }
 
 $counts = [];
-foreach (['users', 'user_sessions', 'activity_logs', 'assessments'] as $t) {
+foreach (['users', 'user_sessions', 'activity_logs', 'assessments', 'scoring_revisions'] as $t) {
     $counts[$t] = (int) $db->query("SELECT COUNT(*) FROM $t")->fetchColumn();
 }
 

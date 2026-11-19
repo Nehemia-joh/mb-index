@@ -67,9 +67,9 @@ function gars_subscale_defs(): array
             "name" => "Social Communication",
             "short" => "SC",
             "questions" => [
-                "Responds inappropriately to heinous stimuli (e.g., doesn't laugh at jokes, cartoons, funny stories).",
+                "Responds inappropriately to humorous stimuli (e.g., doesn't laugh at jokes, cartoons, funny stories).",
                 "Has difficulty understanding jokes.",
-                "Has difficulty understanding sting expressions.",
+                "Has difficulty understanding slang expressions.",
                 "Has difficulty identifying when someone is teasing.",
                 "Has difficulty understanding when he or she is being ridiculed.",
                 "Has difficulty understanding what causes people to dislike him or her.",
@@ -436,6 +436,26 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
     // apply the current mute choice on load (relevant when editing a mute record)
     const muteInit = document.querySelector('#rating-form input[name="is_mute"]:checked');
     if (muteInit) toggleMute(muteInit.value);
+
+    // auto-fill Age from Date of birth (measured at the date of rating, else today)
+    const dobInput = document.getElementById('date_of_birth');
+    const ratingInput = document.getElementById('date_of_rating');
+    const ageInput = document.getElementById('age');
+    function autoFillAge(overwrite) {
+        if (!dobInput || !ageInput || !dobInput.value) return;
+        const dob = new Date(dobInput.value + 'T00:00:00');
+        const refStr = (ratingInput && ratingInput.value) ? ratingInput.value : '';
+        const ref = refStr ? new Date(refStr + 'T00:00:00') : new Date();
+        if (isNaN(dob) || isNaN(ref) || dob > ref) return;
+        if (!overwrite && ageInput.value.trim() !== '') return;
+        let years = ref.getFullYear() - dob.getFullYear();
+        const m = ref.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && ref.getDate() < dob.getDate())) years--;
+        if (years >= 0 && years <= 120) ageInput.value = String(years);
+    }
+    if (dobInput) dobInput.addEventListener('change', () => autoFillAge(true));
+    if (ratingInput) ratingInput.addEventListener('change', () => autoFillAge(true));
+    autoFillAge(false);
 
     // required-fields meter
     const reqFields = document.querySelectorAll('#rating-form [required]');

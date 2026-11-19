@@ -340,10 +340,30 @@ try {
                 <tr><th>Autism Index</th><th>Probability of ASD</th><th>DSM-5 severity level</th><th>Descriptor</th></tr>
             </thead>
             <tbody>
-                <tr><td>54 or below</td><td><span class="badge on">Unlikely</span></td><td>Not ASD</td><td>Not ASD</td></tr>
-                <tr><td>55–70</td><td><span class="badge warn">Probable</span></td><td>Level 1</td><td>Minimal support required</td></tr>
-                <tr><td>71–100</td><td><span class="badge off">Very likely</span></td><td>Level 2</td><td>Requiring substantial support</td></tr>
-                <tr><td>101 and above</td><td><span class="badge off">Very likely</span></td><td>Level 3</td><td>Requiring very substantial support</td></tr>
+                <?php
+                // rendered from the interpretation bands active right now (approved revision or built-in)
+                $bands = gars_interpretation_bands();
+                $prevMax = null;
+                foreach ($bands as $band):
+                    $max = $band['max'] !== null ? (int) $band['max'] : null;
+                    if ($prevMax === null && $max === null) {
+                        $rangeLabel = 'Any index';
+                    } elseif ($prevMax === null) {
+                        $rangeLabel = $max . ' or below';
+                    } elseif ($max === null) {
+                        $rangeLabel = ($prevMax + 1) . ' and above';
+                    } else {
+                        $rangeLabel = ($prevMax + 1) . '–' . $max;
+                    }
+                    $prevMax = $max ?? $prevMax;
+                ?>
+                    <tr>
+                        <td><?php echo gars_e($rangeLabel); ?></td>
+                        <td><span class="badge <?php echo gars_prob_class((string) $band['probability']); ?>"><?php echo gars_e($band['probability']); ?></span></td>
+                        <td><?php echo gars_e($band['severity']); ?></td>
+                        <td><?php echo gars_e($band['descriptor']); ?></td>
+                    </tr>
+                <?php endforeach; ?>
             </tbody>
         </table>
         </div>

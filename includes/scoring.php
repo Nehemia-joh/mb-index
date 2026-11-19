@@ -4,12 +4,19 @@
  *
  * Table A: raw subscale score -> scaled score + percentile rank.
  * Table B: sum of scaled scores -> percentile rank + Autism Index.
+ * Interpretation bands: Autism Index -> probability / severity / descriptor.
+ *
+ * The constants below are the published instrument and the built-in fallback.
+ * Administrators may propose edits to any of the three tables on
+ * /scoring-tables; a change only takes effect globally after ANOTHER
+ * admin/it_admin approves it (an editor can never approve their own change).
+ * Approved revisions live in the scoring_revisions table and are loaded here.
+ *
  * Shared by score.php (first save) and edit.php (recalculation).
- * The tables are copied verbatim from the original scoring implementation —
- * they ARE the published instrument; never change a number in them.
  */
 
 require_once __DIR__ . '/rating_form.php'; // gars_subscale_defs()
+require_once __DIR__ . '/db.php';          // gars_db() — for the active-revision lookup
 
 const GARS_TABLE_A = [
     // [scaled_score, percentile_rank, RB_range, SI_range, SC_range, ER_range, CS_range, MS_range]
@@ -121,6 +128,78 @@ const GARS_TABLE_B = [
     ["<1", null, [21,21], 43],
 ];
 
+/** The published interpretation bands (Autism Index upper bound -> outcome). */
+function gars_default_interpretation_bands(): array
+{
+    return [
+        ['max' => 54,  'probability' => 'Unlikely',   'severity' => 'Not ASD',   'descriptor' => 'Not ASD'],
+        ['max' => 70,  'probability' => 'Probable',    'severity' => 'Level 1',   'descriptor' => 'Minimal Support Required'],
+        ['max' => 100, 'probability' => 'Very Likely', 'severity' => 'Level 2',   'descriptor' => 'Requiring Substantial Support'],
+        ['max' => null,'probability' => 'Very Likely', 'severity' => 'Level 3',   'descriptor' => 'Requiring Very Substantial Support'],
+    ];
+}
+
+/** Per-request cache of approved table revisions (null = use the built-in table). */
+function &gars_scoring_cache(): array
+{
+    static $cache = [];
+    return $cache;
+}
+
+/** Drop the cached revisions (tests, after a revision is approved). */
+function gars_reset_scoring_cache(): void
+{
+    $c = &gars_scoring_cache();
+    $c = [];
+}
+
+/**
+ * The active version of a scoring table: the newest APPROVED revision in the
+ * database, or null when none exists (-> the built-in published table).
+ */
+function gars_active_revision(string $kind): ?array
+{
+    $cache = &gars_scoring_cache();
+    if (array_key_exists($kind, $cache)) {
+        return $cache[$kind];
+    }
+    $cache[$kind] = null;
+    try {
+        $stmt = gars_db()->prepare(
+            "SELECT payload FROM scoring_revisions WHERE kind = ? AND status = 'approved' ORDER BY id DESC LIMIT 1"
+        );
+        $stmt->execute([$kind]);
+        $payload = $stmt->fetchColumn();
+        if ($payload !== false && $payload !== null) {
+            $decoded = json_decode((string) $payload, true);
+            if (is_array($decoded) && $decoded !== []) {
+                $cache[$kind] = $decoded;
+            }
+        }
+    } catch (Throwable $e) {
+        // scoring_revisions not migrated yet, or no DB in this context — built-in table
+    }
+    return $cache[$kind];
+}
+
+/** Table A in use right now (approved revision or the published constant). */
+function gars_table_a(): array
+{
+    return gars_active_revision('table_a') ?? GARS_TABLE_A;
+}
+
+/** Table B in use right now (approved revision or the published constant). */
+function gars_table_b(): array
+{
+    return gars_active_revision('table_b') ?? GARS_TABLE_B;
+}
+
+/** Interpretation bands in use right now (approved revision or the published bands). */
+function gars_interpretation_bands(): array
+{
+    return gars_active_revision('interpretation') ?? gars_default_interpretation_bands();
+}
+
 /** Raw subscale score -> [scaled score, percentile rank]. */
 function gars_get_scaled_percentile(int $rawScore, string $short): array
 {
@@ -130,9 +209,9 @@ function gars_get_scaled_percentile(int $rawScore, string $short): array
         return [null, null];
     }
 
-    foreach (GARS_TABLE_A as $entry) {
-        $range = $entry[$idx];
-        if ($range !== null && $range[0] <= $rawScore && $rawScore <= $range[1]) {
+    foreach (gars_table_a() as $entry) {
+        $range = $entry[$idx] ?? null;
+        if (is_array($range) && $range[0] <= $rawScore && $rawScore <= $range[1]) {
             return [$entry[0], $entry[1]];
         }
     }
@@ -142,9 +221,9 @@ function gars_get_scaled_percentile(int $rawScore, string $short): array
 /** Sum of scaled scores -> [percentile rank, Autism Index]. */
 function gars_get_composite(int $sumScaledScores, bool $useSix): array
 {
-    foreach (GARS_TABLE_B as $entry) {
-        $range = $useSix ? $entry[2] : $entry[1];
-        if ($range !== null && $range[0] <= $sumScaledScores && $sumScaledScores <= $range[1]) {
+    foreach (gars_table_b() as $entry) {
+        $range = $useSix ? ($entry[2] ?? null) : ($entry[1] ?? null);
+        if (is_array($range) && $range[0] <= $sumScaledScores && $sumScaledScores <= $range[1]) {
             return [$entry[0], $entry[3]];
         }
     }
@@ -155,10 +234,175 @@ function gars_get_composite(int $sumScaledScores, bool $useSix): array
 function gars_get_interpretation(?int $autismIndex): array
 {
     if ($autismIndex === null) return [null, null, null];
-    if ($autismIndex <= 54) return ["Unlikely", "Not ASD", "Not ASD"];
-    if ($autismIndex <= 70) return ["Probable", "Level 1", "Minimal Support Required"];
-    if ($autismIndex <= 100) return ["Very Likely", "Level 2", "Requiring Substantial Support"];
-    return ["Very Likely", "Level 3", "Requiring Very Substantial Support"];
+    foreach (gars_interpretation_bands() as $band) {
+        $max = $band['max'] ?? null;
+        if ($max === null || $autismIndex <= (int) $max) {
+            return [
+                (string) $band['probability'],
+                (string) $band['severity'],
+                (string) $band['descriptor'],
+            ];
+        }
+    }
+    return [null, null, null];
+}
+
+/* --------------------------------------------------- payload validation ---- */
+
+/** Highest possible raw score per subscale (items x 3) — bounds for Table A ranges. */
+function gars_table_a_max_raw(): array
+{
+    $max = [];
+    foreach (gars_subscale_defs() as $sub) {
+        $max[strtoupper($sub['short'])] = count($sub['questions']) * 3;
+    }
+    return $max; // RB=39 SI=42 SC=27 ER=24 CS=21 MS=21
+}
+
+/**
+ * Validate + normalise a proposed table payload.
+ * Returns [$errors, $normalized]; $normalized is only trustworthy when $errors is empty.
+ * Shapes:
+ *   table_a        list of [scaled, pct, rb, si, sc, er, cs, ms]   (range = [lo,hi] | null)
+ *   table_b        list of [pct, sum4, sum6, autismIndex]          (range = [lo,hi] | null)
+ *   interpretation list of {max, probability, severity, descriptor}(max = int | null)
+ */
+function gars_prepare_scoring_payload(string $kind, mixed $raw): array
+{
+    $errors = [];
+    if (!is_array($raw) || $raw === []) {
+        return [['The table is empty — at least one row is required.'], null];
+    }
+    // accept an object-wrapped decode ({rows:[...]}) defensively
+    if (array_key_exists('rows', $raw) && is_array($raw['rows'])) {
+        $raw = $raw['rows'];
+    }
+
+    $isRange = static function (mixed $v): bool {
+        return is_array($v) && array_is_list($v) && count($v) === 2
+            && is_numeric($v[0]) && is_numeric($v[1])
+            && (int) $v[0] >= 0 && (int) $v[0] <= (int) $v[1];
+    };
+
+    $out = [];
+
+    if ($kind === 'table_a') {
+        $maxRaw = gars_table_a_max_raw();
+        $subKeys = ['RB', 'SI', 'SC', 'ER', 'CS', 'MS'];
+        foreach (array_values($raw) as $i => $row) {
+            $n = $i + 1;
+            if (!is_array($row) || count($row) !== 8) {
+                $errors[] = "Row $n: expected 8 cells (scaled, percentile, then 6 raw ranges).";
+                continue;
+            }
+            $row = array_values($row);
+            $scaled = $row[0];
+            $pct = trim((string) ($row[1] ?? ''));
+            if (!is_numeric($scaled) || (int) $scaled < 1 || (int) $scaled > 30) {
+                $errors[] = "Row $n: scaled score must be a number between 1 and 30.";
+                $scaled = 0;
+            }
+            if ($pct === '' || mb_strlen($pct) > 10) {
+                $errors[] = "Row $n: percentile rank is required (max 10 characters).";
+            }
+            $ranges = [];
+            foreach ($subKeys as $j => $key) {
+                $v = $row[2 + $j];
+                if ($v === null || $v === '') {
+                    $ranges[] = null;
+                    continue;
+                }
+                if (!$isRange($v)) {
+                    $errors[] = "Row $n: $key range must be empty or 'low-high' with low ≤ high.";
+                    $ranges[] = null;
+                    continue;
+                }
+                $lo = (int) $v[0];
+                $hi = (int) $v[1];
+                if ($hi > $maxRaw[$key]) {
+                    $errors[] = "Row $n: $key range $lo-$hi exceeds the maximum raw score of {$maxRaw[$key]}.";
+                }
+                $ranges[] = [$lo, $hi];
+            }
+            $out[] = [(int) $scaled, $pct, ...$ranges];
+        }
+    } elseif ($kind === 'table_b') {
+        foreach (array_values($raw) as $i => $row) {
+            $n = $i + 1;
+            if (!is_array($row) || count($row) !== 4) {
+                $errors[] = "Row $n: expected 4 cells (percentile, 4-score range, 6-score range, Autism Index).";
+                continue;
+            }
+            $row = array_values($row);
+            $pct = trim((string) ($row[0] ?? ''));
+            if ($pct === '' || mb_strlen($pct) > 10) {
+                $errors[] = "Row $n: percentile rank is required (max 10 characters).";
+            }
+            $sum4 = $row[1];
+            $sum6 = $row[2];
+            foreach ([['4-score', $sum4], ['6-score', $sum6]] as [$label, $v]) {
+                if ($v !== null && $v !== '' && !$isRange($v)) {
+                    $errors[] = "Row $n: $label range must be empty or 'low-high' with low ≤ high.";
+                }
+            }
+            $sum4 = ($sum4 === null || $sum4 === '' || !$isRange($sum4)) ? null : [(int) $sum4[0], (int) $sum4[1]];
+            $sum6 = ($sum6 === null || $sum6 === '' || !$isRange($sum6)) ? null : [(int) $sum6[0], (int) $sum6[1]];
+            if ($sum4 === null && $sum6 === null) {
+                $errors[] = "Row $n: give at least one of the 4-score or 6-score ranges.";
+            }
+            $ai = $row[3];
+            if (!is_numeric($ai) || (int) $ai < 0 || (int) $ai > 200) {
+                $errors[] = "Row $n: Autism Index must be a number between 0 and 200.";
+                $ai = 0;
+            }
+            $out[] = [$pct, $sum4, $sum6, (int) $ai];
+        }
+    } elseif ($kind === 'interpretation') {
+        $prevMax = -1;
+        foreach (array_values($raw) as $i => $row) {
+            $n = $i + 1;
+            if (!is_array($row)) {
+                $errors[] = "Band $n: must be an object with max, probability, severity and descriptor.";
+                continue;
+            }
+            $row = $row + ['max' => null, 'probability' => '', 'severity' => '', 'descriptor' => ''];
+            $max = $row['max'];
+            if ($max !== null && $max !== '') {
+                if (!is_numeric($max) || (int) $max < 0) {
+                    $errors[] = "Band $n: upper Autism Index bound must be a number or empty (open-ended).";
+                    $max = null;
+                } else {
+                    $max = (int) $max;
+                    if ($max <= $prevMax) {
+                        $errors[] = "Band $n: upper bounds must increase (previous was $prevMax).";
+                    }
+                    $prevMax = $max;
+                }
+            } else {
+                $max = null;
+            }
+            $prob = trim((string) $row['probability']);
+            $sev = trim((string) $row['severity']);
+            $desc = trim((string) $row['descriptor']);
+            if ($prob === '' || mb_strlen($prob) > 30) $errors[] = "Band $n: probability is required (max 30 characters).";
+            if ($sev === '' || mb_strlen($sev) > 30)  $errors[] = "Band $n: severity level is required (max 30 characters).";
+            if ($desc === '' || mb_strlen($desc) > 80) $errors[] = "Band $n: descriptor is required (max 80 characters).";
+            $out[] = ['max' => $max, 'probability' => $prob, 'severity' => $sev, 'descriptor' => $desc];
+        }
+        $last = $out === [] ? null : $out[count($out) - 1];
+        if ($last !== null && $last['max'] !== null) {
+            $errors[] = 'The last band must have an empty upper bound so every Autism Index is covered.';
+        }
+        foreach ($out as $i => $band) {
+            if ($band['max'] === null && $i !== count($out) - 1) {
+                $errors[] = 'Only the last band may have an empty upper bound.';
+            }
+        }
+    } else {
+        $errors[] = "Unknown table kind \"$kind\".";
+    }
+
+    return [$errors, $errors === [] ? $out : null];
 }
 
 /**
