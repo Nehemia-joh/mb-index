@@ -129,6 +129,22 @@ ok(str_contains($st, 'gars_version_of'), 'version label helper present');
 ok(str_contains($st, "'v1.'"), 'v1.x version numbering present');
 ok(str_contains($st, "status IN ('approved','superseded')"), 'version numbering counts approved revisions');
 
+echo "== Audit pages (sessions + activity log) ==\n";
+$sessSrc = file_get_contents(__DIR__ . '/../sessions.php');
+$actSrc = file_get_contents(__DIR__ . '/../activity.php');
+$uiSrc = file_get_contents(__DIR__ . '/../includes/ui.php');
+$routeSrc = file_get_contents(__DIR__ . '/../route.php');
+ok(str_contains($sessSrc, "gars_require_role(['admin', 'it_admin'])"), 'sessions page restricted to admin/it_admin');
+ok(str_contains($actSrc, "gars_require_role(['admin', 'it_admin'])"), 'activity page restricted to admin/it_admin');
+ok(str_contains($actSrc, 'action = ?') && str_contains($actSrc, 'username = ?') && str_contains($actSrc, 'details LIKE ?'),
+    'activity filters use bound parameters (no SQL concatenation of user input)');
+ok(str_contains($actSrc, "DateTime::createFromFormat('!Y-m-d'"), 'date filters validated strictly');
+ok(str_contains($sessSrc, "in_array(\$fUser, \$allUsers, true)"), 'sessions user filter whitelisted against the users table');
+ok(str_contains($actSrc, 'LIMIT') && str_contains($actSrc, 'OFFSET'), 'activity log paginates');
+ok(str_contains($uiSrc, "\$links['sessions'] = 'Sessions'") && str_contains($uiSrc, "\$links['activity'] = 'Activity'"),
+    'nav shows Sessions + Activity to admin/it_admin');
+ok(str_contains($routeSrc, "'sessions.php'") && str_contains($routeSrc, "'activity.php'"), 'routes /sessions and /activity registered');
+
 echo "== Schema ==\n";
 ok((bool) $db->query("SHOW TABLES LIKE 'scoring_revisions'")->fetchColumn(), 'scoring_revisions table exists');
 

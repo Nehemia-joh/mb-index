@@ -3,8 +3,9 @@
 # Run from the project root:  bash tests/e2e.sh
 # Covers: wording/title/age JS, therapist form scoring, scoring-table
 # edit + four-eyes approval, global effect of an approved revision,
-# validation failures, role guards, version labels (v1.0, v1.1, …)
-# and restoring an older version from the history.
+# validation failures, role guards, version labels (v1.0, v1.1, …),
+# restoring an older version from the history, sessions-by-user page
+# and the filterable activity log (403 for therapists).
 set -u
 
 BASE=http://127.0.0.1:8123
@@ -221,6 +222,51 @@ contains "scoring back to old version percentile 88" "$OUT/report4.html" '<span 
 contains "scoring back to old version AI 111" "$OUT/report4.html" '<span class="plate-n">111</span>'
 check "C2 (v1.2) superseded" "superseded" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REVC")"
 check "REV1 (v1.1) superseded" "superseded" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV1")"
+
+# ---------------------------------------------------------------- sessions by user + activity log filters
+code=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/therapist.jar" "$BASE/sessions")
+check "therapist gets 403 on /sessions" "403" "$code"
+code=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/therapist.jar" "$BASE/activity")
+check "therapist gets 403 on /activity" "403" "$code"
+contains "admin nav has Sessions link" "$OUT/adm-scoring.html" ">Sessions</a>"
+contains "admin nav has Activity link" "$OUT/adm-scoring.html" ">Activity</a>"
+
+ACCOUNTS=$(sql "SELECT COUNT(*) FROM users")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/sess.html" "$BASE/sessions"
+contains "sessions page heading" "$OUT/sess.html" "Sessions by user"
+contains "summary lists every account" "$OUT/sess.html" "Accounts shown: $ACCOUNTS"
+contains "summary shows the e2e users" "$OUT/sess.html" "testere2e"
+contains "sessions filter form present" "$OUT/sess.html" 'name="status"'
+contains "summary offers a Trace link" "$OUT/sess.html" ">Trace</a>"
+contains "session detail caption present" "$OUT/sess.html" "Sessions found:"
+
+SESS_T=$(sql "SELECT COUNT(*) FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE u.username='testere2e'")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/sess-t.html" "$BASE/sessions?u=testere2e"
+contains "user filter narrows the summary to one account" "$OUT/sess-t.html" "Accounts shown: 1"
+contains "user filter narrows the session list" "$OUT/sess-t.html" "Sessions found: $SESS_T"
+contains "filter select marks the chosen user" "$OUT/sess-t.html" 'value="testere2e" selected'
+contains "active session shown as live" "$OUT/sess-t.html" ">live</span>"
+
+EXP_LOGIN=$(sql "SELECT COUNT(*) FROM activity_logs WHERE action='login'")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/act-login.html" "$BASE/activity?action=login"
+contains "action filter count matches the database" "$OUT/act-login.html" "of $EXP_LOGIN entries"
+contains "login rows rendered" "$OUT/act-login.html" "<td>login</td>"
+not_contains "no page_visit rows inside a login-only view" "$OUT/act-login.html" "<td>page_visit</td>"
+
+EXP_T=$(sql "SELECT COUNT(*) FROM activity_logs WHERE username='testere2e' AND action='page_visit'")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/act-t.html" "$BASE/activity?u=testere2e&action=page_visit"
+contains "user + action combo count matches the database" "$OUT/act-t.html" "of $EXP_T entries"
+
+EXP_ALL=$(sql "SELECT COUNT(*) FROM activity_logs")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/act-bad.html" "$BASE/activity?u=nobody-here"
+contains "unknown user filter is ignored (whitelist)" "$OUT/act-bad.html" "of $((EXP_ALL + 1)) entries"
+EXP_ALL2=$(sql "SELECT COUNT(*) FROM activity_logs")
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/act-baddate.html" "$BASE/activity?from=banana"
+contains "invalid date filter is ignored" "$OUT/act-baddate.html" "of $((EXP_ALL2 + 1)) entries"
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/act-empty.html" "$BASE/activity?from=2099-01-01"
+contains "future date range returns zero entries" "$OUT/act-empty.html" "of 0 entries"
+contains "empty result offers a friendly message" "$OUT/act-empty.html" "No entries match"
+contains "activity page links back to sessions" "$OUT/act-t.html" "sessions?u=testere2e"
 
 # ---------------------------------------------------------------- history & records
 curl -s -c "$JAR/therapist.jar" -b "$JAR/therapist.jar" -o "$OUT/records.html" "$BASE/records"

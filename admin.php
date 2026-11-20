@@ -44,6 +44,8 @@ gars_header('Admin', 'admin');
     <div class="actions" style="margin-top:0;">
         <a class="btn" href="<?php echo gars_url('register'); ?>">Create user</a>
         <a class="btn ghost" href="<?php echo gars_url('itadmin'); ?>">IT admin view</a>
+        <a class="btn ghost" href="<?php echo gars_url('sessions'); ?>">Sessions by user</a>
+        <a class="btn ghost" href="<?php echo gars_url('activity'); ?>">Activity log</a>
     </div>
 </div>
 
@@ -75,6 +77,7 @@ gars_header('Admin', 'admin');
 
 <div class="section">
     <h2>Recent activity</h2>
+    <p class="muted" style="margin-bottom:12px;">Latest 25 entries — <a class="a-link" href="<?php echo gars_url('activity'); ?>">open the full log with filters</a> to trace what a user did.</p>
     <div class="tablewrap">
     <table class="data">
         <thead><tr><th>When</th><th>User</th><th>Role</th><th>Action</th><th>Page</th><th>Details</th></tr></thead>

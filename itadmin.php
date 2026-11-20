@@ -60,7 +60,8 @@ gars_header('IT Admin', 'itadmin');
 
 <div class="section">
     <h2>Login sessions</h2>
-    <p class="muted" style="margin-bottom:12px;">One row per login: the page it is on now, the page it came from, and how it ended.</p>
+    <p class="muted" style="margin-bottom:12px;">One row per login: the page it is on now, the page it came from, and how it ended.
+        <a class="a-link" href="<?php echo gars_url('sessions'); ?>">Open sessions by user →</a></p>
     <div class="tablewrap">
     <table class="data">
         <thead><tr><th>User</th><th>Role</th><th>Current page</th><th>Came from</th><th class="n">Page views</th><th>Logged in</th><th>Last activity</th><th>Status</th></tr></thead>
@@ -84,7 +85,8 @@ gars_header('IT Admin', 'itadmin');
 
 <div class="section">
     <h2>Full activity trail</h2>
-    <p class="muted" style="margin-bottom:12px;">Latest 50 entries: every page move and every change, with the source IP.</p>
+    <p class="muted" style="margin-bottom:12px;">Latest 50 entries: every page move and every change, with the source IP.
+        <a class="a-link" href="<?php echo gars_url('activity'); ?>">Filter & trace a user →</a></p>
     <div class="tablewrap">
     <table class="data">
         <thead><tr><th>When</th><th>User</th><th>Role</th><th>Action</th><th>Page</th><th>Details</th><th>IP</th></tr></thead>

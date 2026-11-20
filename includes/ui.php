@@ -72,6 +72,8 @@ function gars_nav_links(?array $user): array
     } else {
         $links[$user['role'] === 'it_admin' ? 'itadmin' : 'admin'] =
             $user['role'] === 'it_admin' ? 'IT admin' : 'Admin';
+        $links['sessions'] = 'Sessions';
+        $links['activity'] = 'Activity';
         $links['scoring-tables'] = 'Scoring tables';
         $links['register'] = 'Create user';
     }
