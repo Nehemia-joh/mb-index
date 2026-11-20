@@ -248,5 +248,41 @@ ok(gars_login_lock('unitpass_e2e', '198.51.100.12') === null, 'failure counter r
 $db->exec('DELETE FROM users WHERE username = "unitpass_e2e"');
 $db->exec("DELETE FROM login_attempts WHERE username = 'unitpass_e2e'");
 
+echo "== Security: P1 headers, timing, bcrypt cost, idle timeout ==\n";
+$authSrc = file_get_contents(__DIR__ . '/../includes/auth.php');
+$htSrc = file_get_contents(__DIR__ . '/../.htaccess');
+ok(str_contains($secSrc, 'Content-Security-Policy') && str_contains($secSrc, "frame-ancestors 'none'"),
+    'PHP sends a CSP with frame-ancestors');
+ok(str_contains($secSrc, 'X-Frame-Options: DENY') && str_contains($secSrc, 'Referrer-Policy: strict-origin-when-cross-origin')
+    && str_contains($secSrc, 'Permissions-Policy:'),
+    'clickjacking, referrer and permissions headers present');
+ok(str_contains($secSrc, 'X-Content-Type-Options: nosniff'), 'nosniff sent on dynamic responses too');
+ok(str_contains($cfgSrc, 'gars_send_security_headers()'), 'headers sent on every request via config');
+ok(gars_csp_policy() === gars_csp_policy() && str_contains(gars_csp_policy(), "default-src 'self'"),
+    'CSP policy builder returns a concrete policy');
+ok(str_contains($htSrc, 'Options -Indexes'), 'directory listing disabled in .htaccess');
+ok(str_contains($htSrc, 'RewriteRule ^(tests|ads)/ - [F,L]'), 'tests/ and ads/ blocked before the file rule');
+ok(str_contains($htSrc, 'Content-Security-Policy') && str_contains($htSrc, 'X-Frame-Options'),
+    'hardening headers shipped for static files in .htaccess');
+ok(str_contains($routeSrc, 'tests|ads') && str_contains($routeSrc, "\\.sql"),
+    'dev router blocks tests/, ads/ and SQL dumps');
+ok(str_contains($routeSrc, '.env'), 'dev router blocks env files');
+ok(str_starts_with(GARS_TIMING_DUMMY, '$2y$12$'), 'timing dummy is a cost-12 bcrypt hash');
+ok(str_contains($loginSrc, 'GARS_TIMING_DUMMY'), 'login equalises timing for unknown accounts');
+ok(str_contains($loginSrc, 'password_needs_rehash'), 'legacy hashes upgraded on successful login');
+ok(str_contains($authSrc, "['cost' => 12]"), 'new passwords hashed at bcrypt cost 12');
+$uid = gars_create_user('unitcost_e2e', 'CostPass!2026', 'therapist', 'Unit Cost');
+$h = (string) $db->query("SELECT password_hash FROM users WHERE username='unitcost_e2e'")->fetchColumn();
+ok(str_starts_with($h, '$2y$12$'), 'stored hash carries the cost-12 prefix');
+ok(!password_needs_rehash($h, PASSWORD_BCRYPT, ['cost' => 12]), 'stored hash satisfies the cost-12 policy');
+$db->exec('DELETE FROM users WHERE username = "unitcost_e2e"');
+
+// idle timeout: first (and only) runtime call to gars_current_user in this process
+$_SESSION['gars_user'] = ['id' => 1, 'username' => 'admin', 'role' => 'it_admin', 'full_name' => 'Admin'];
+$_SESSION['gars_last_seen'] = time() - (SESSION_TIMEOUT + 60);
+ok(gars_current_user() === null, 'idle session is treated as logged out');
+ok(!isset($_SESSION['gars_user']), 'idle session state cleared');
+ok(SESSION_TIMEOUT > 0, 'idle timeout enabled by default');
+
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

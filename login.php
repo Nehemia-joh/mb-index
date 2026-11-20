@@ -43,7 +43,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             gars_log_activity('login_blocked', 'login', 'Blocked sign-in attempt (lockout active) for "' . gars_lock_key($username) . '"');
         } else {
             $user = gars_find_user($username);
-            if ($user && (int) $user['is_active'] && password_verify($password, $user['password_hash'])) {
+            $ok = false;
+            if ($user && (int) $user['is_active']) {
+                $ok = password_verify($password, $user['password_hash']);
+                if ($ok && password_needs_rehash($user['password_hash'], PASSWORD_BCRYPT, ['cost' => 12])) {
+                    // quietly upgrade legacy hashes to the current cost policy
+                    gars_db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+                        ->execute([password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]), $user['id']]);
+                }
+            } else {
+                // timing equalisation: a missing or inactive account must cost
+                // the same as a wrong password on a real account
+                password_verify($password, GARS_TIMING_DUMMY);
+            }
+            if ($ok) {
                 // successful login — register the session in the database
                 gars_clear_login_failures($username);
                 session_regenerate_id(true);
@@ -54,6 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'role' => $user['role'],
                     'full_name' => $user['full_name'],
                 ];
+                $_SESSION['gars_last_seen'] = time();
                 gars_db()->prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
                     ->execute([date('Y-m-d H:i:s'), $user['id']]);
                 gars_log_activity('login', 'login', 'Logged in as ' . $user['username'] . ' (' . $user['role'] . ')');

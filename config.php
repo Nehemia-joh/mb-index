@@ -69,3 +69,4 @@ $GARS_ROLES = ['therapist' => 'Therapist', 'admin' => 'Administrator', 'it_admin
    Loaded last so env() and the constants above already exist. */
 require_once __DIR__ . '/includes/security.php';
 gars_force_https();
+gars_send_security_headers();

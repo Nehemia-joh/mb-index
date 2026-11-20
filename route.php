@@ -59,7 +59,17 @@ $requested = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 // serve them too. Must run on the raw path, before the mount-point strip below
 // (under `php -S`, SCRIPT_NAME is the requested path itself).
 if ($requested !== '/' && str_contains($requested, '.')) {
-    $static = realpath(GARS_APP_ROOT . '/' . ltrim($requested, '/'));
+    $rel = ltrim($requested, '/');
+    // dev-server parity with .htaccess: the test suite, stray local media,
+    // SQL dumps and env files are never downloadable (php -S has no .htaccess)
+    $blockedStatic = preg_match('#^(tests|ads)(/|$)#i', $rel) === 1
+        || preg_match('/\.sql$/i', $rel) === 1
+        || preg_match('/^\.env($|[-.])/i', basename($rel)) === 1;
+    if ($blockedStatic) {
+        http_response_code(403);
+        exit('403 — Not available.');
+    }
+    $static = realpath(GARS_APP_ROOT . '/' . $rel);
     if ($static !== false
         && str_starts_with($static, GARS_APP_ROOT . '/')
         && is_file($static)

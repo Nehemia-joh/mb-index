@@ -46,6 +46,47 @@ function gars_force_https(): void
     exit;
 }
 
+/* ----------------------------------------------------------- HTTP headers */
+
+/**
+ * Content-Security-Policy — keep in sync with the copy in .htaccess
+ * (Apache's `Header set` replaces the PHP-sent value with the same string,
+ * so production and dev ship one identical policy).
+ *
+ * 'unsafe-inline' is required by the app's inline <style>/<script> blocks and
+ * onsubmit handlers; moving to nonces is a future hardening step.
+ */
+function gars_csp_policy(): string
+{
+    return "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        . "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        . "font-src https://fonts.gstatic.com; img-src 'self' data:; "
+        . "form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
+}
+
+/** Hardening headers on every dynamic response (dev server has no .htaccess). */
+function gars_send_security_headers(): void
+{
+    if (PHP_SAPI === 'cli' || headers_sent()) {
+        return;
+    }
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()');
+    header('Content-Security-Policy: ' . gars_csp_policy());
+}
+
+/* ------------------------------------------------------- timing equalisation */
+
+/**
+ * A valid bcrypt cost-12 hash of a password nobody knows. login.php verifies
+ * against it when the account does not exist (or is inactive) so a missing
+ * account costs exactly the same time as a wrong password on a real account
+ * (full equality once every stored hash has been upgraded to cost 12).
+ */
+const GARS_TIMING_DUMMY = '$2y$12$n4ZOBAHJisDiMezCfHHob.rc0WX.zqkkFvqEnzvoYy13IqVIAdh/K';
+
 /* --------------------------------------------------------------- sessions */
 
 /**

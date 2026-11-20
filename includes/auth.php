@@ -58,7 +58,7 @@ function gars_create_user(string $username, string $password, string $role, stri
         $username,
         $email !== '' ? $email : null,
         $fullName !== '' ? $fullName : $username,
-        password_hash($password, PASSWORD_DEFAULT),
+        password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]),
         $role,
         $mustChange ? 1 : 0,
     ]);
@@ -85,6 +85,29 @@ function gars_current_user(): ?array
     if (empty($_SESSION['gars_user'])) {
         return $user = null;
     }
+    // server-side idle timeout: SESSION_TIMEOUT seconds without a request
+    // ends the session (0 = never); the clock starts now for sessions that
+    // predate gars_last_seen so a deploy never logs everybody out at once
+    $now = time();
+    $last = (int) ($_SESSION['gars_last_seen'] ?? 0);
+    if ($last <= 0) {
+        $last = $now;
+    }
+    if (SESSION_TIMEOUT > 0 && ($now - $last) > SESSION_TIMEOUT) {
+        $token = (string) ($_SESSION['gars_token'] ?? '');
+        if ($token !== '') {
+            try {
+                gars_db()->prepare(
+                    'UPDATE user_sessions SET logout_at = ? WHERE session_token = ? AND logout_at IS NULL'
+                )->execute([date('Y-m-d H:i:s', $now), $token]);
+            } catch (Throwable $e) {
+                // trail bookkeeping must never break the redirect to /login
+            }
+        }
+        unset($_SESSION['gars_user'], $_SESSION['gars_token'], $_SESSION['csrf_token'], $_SESSION['gars_last_seen']);
+        return $user = null;
+    }
+    $_SESSION['gars_last_seen'] = $now;
     $dbUser = gars_find_user($_SESSION['gars_user']['username'] ?? '');
     if (!$dbUser || !(int) $dbUser['is_active']) {
         unset($_SESSION['gars_user']);

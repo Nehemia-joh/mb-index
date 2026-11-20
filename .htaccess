@@ -6,6 +6,10 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    # Never serve the test suite or stray local media (must precede the
+    # -f rule below or the existing files would be served as-is)
+    RewriteRule ^(tests|ads)/ - [F,L]
+
     # Serve real files/folders directly (stylesheets, PDFs...)
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
@@ -15,8 +19,17 @@
     RewriteRule ^(.*)$ route.php [QSA,L]
 </IfModule>
 
+# No directory listings
+Options -Indexes
+
+# Keep in sync with includes/security.php (gars_csp_policy) — Apache replaces
+# the PHP-sent value with this identical string on production.
 <IfModule mod_headers.c>
     Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
 </IfModule>
 
 # Never let anyone download the environment file or the local sqlite db

@@ -389,6 +389,35 @@ contains "defaults restored after reset" "$OUT/itadmin-reset.html" 'name="login_
 contains "reset confirmation flash shown" "$OUT/itadmin-reset.html" "reset to the defaults"
 check "database overrides removed on reset" "0" "$(sql "SELECT COUNT(*) FROM app_settings")"
 
+# ---------------------------------------------------------------- P1 security: headers, static blocking, bcrypt cost
+echo "== security: P1 hardening =="
+
+contains "CSP header sent on dynamic pages" "$OUT/hdr-login.txt" "Content-Security-Policy"
+contains "clickjacking protection sent" "$OUT/hdr-login.txt" "X-Frame-Options: DENY"
+contains "referrer policy sent" "$OUT/hdr-login.txt" "Referrer-Policy: strict-origin-when-cross-origin"
+contains "permissions policy sent" "$OUT/hdr-login.txt" "Permissions-Policy:"
+contains "nosniff sent from PHP too" "$OUT/hdr-login.txt" "X-Content-Type-Options: nosniff"
+
+check "test suite blocked on the dev server" "403" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/tests/e2e.sh")"
+check "sql dump blocked on the dev server" "403" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/newdeploy.sql")"
+check "env example blocked on the dev server" "403" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/.env.example")"
+
+check "new passwords use bcrypt cost 12" '$2y$12$' \
+  "$(sql "SELECT LEFT(password_hash,7) FROM users WHERE username='admin2e2e'")"
+
+# a legacy cost-10 hash is upgraded on the next successful login
+LEGACY=$(php -r 'echo password_hash("LockProbePass1", PASSWORD_BCRYPT, ["cost"=>10]);')
+sql "UPDATE users SET password_hash='$LEGACY' WHERE username='lockprobe_e2e'"
+check "legacy cost-10 hash written" '$2y$10$' \
+  "$(sql "SELECT LEFT(password_hash,7) FROM users WHERE username='lockprobe_e2e'")"
+rm -f "$PJAR"
+PTOK=$(curl -s -c "$PJAR" "$BASE/login" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$PJAR" -c "$PJAR" \
+  -d "username=lockprobe_e2e&password=LockProbePass1&csrf_token=$PTOK" "$BASE/login")
+check "legacy-hash user logs in normally" "302" "$CODE"
+check "hash upgraded to cost 12 on login" '$2y$12$' \
+  "$(sql "SELECT LEFT(password_hash,7) FROM users WHERE username='lockprobe_e2e'")"
+
 # ---------------------------------------------------------------- cleanup
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
