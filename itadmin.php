@@ -14,6 +14,45 @@ define('GARS_ROUTE', 'itadmin');
 $user = gars_require_role(['it_admin']);
 gars_track_page('page_visit', 'IT admin console');
 
+// --- lockout limits: save / reset (IT admin only, CSRF-protected) -----------
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    gars_csrf_check();
+    $settingsAction = (string) ($_POST['action'] ?? '');
+    if ($settingsAction === 'save_lockout') {
+        $limits = [];
+        $badSpec = null;
+        foreach (GARS_LOCK_LIMITS as $key => $spec) {
+            $raw = filter_var($_POST[$key] ?? '', FILTER_VALIDATE_INT);
+            if ($raw === false || $raw < $spec['min'] || $raw > $spec['max']) {
+                $badSpec = $spec;
+                break;
+            }
+            $limits[$key] = (int) $raw;
+        }
+        if ($badSpec !== null) {
+            gars_flash(sprintf('Lockout limits must be whole numbers between %d and %d.', $badSpec['min'], $badSpec['max']), 'error');
+        } else {
+            foreach ($limits as $key => $value) {
+                gars_save_login_setting($key, $value, (int) $user['id']);
+            }
+            gars_log_activity(
+                'settings',
+                'itadmin',
+                'Login lockout limits saved: ' . $limits['login_user_limit'] . ' per account, '
+                . $limits['login_ip_limit'] . ' per IP, lock ' . $limits['login_lock_minutes'] . ' min'
+            );
+            gars_flash('Login lockout limits saved.');
+        }
+        gars_redirect(gars_url('itadmin'));
+    }
+    if ($settingsAction === 'reset_lockout') {
+        gars_delete_login_settings();
+        gars_log_activity('settings', 'itadmin', 'Login lockout limits reset to defaults');
+        gars_flash('Login lockout limits reset to the defaults.');
+        gars_redirect(gars_url('itadmin'));
+    }
+}
+
 $db = gars_db();
 
 $stats = [
@@ -57,6 +96,44 @@ gars_header('IT Admin', 'itadmin');
 <p class="muted" style="margin-top:12px;">
     Sessions idle for over <?php echo (int) (SESSION_TIMEOUT / 60); ?> minutes are closed automatically. A new admin account can be created from <a class="a-link" href="<?php echo gars_url('register'); ?>">Create user</a>.
 </p>
+
+<div class="section">
+    <h2>Login lockout</h2>
+    <p class="muted" style="margin-bottom:14px;">
+        Brute-force protection: after this many failed sign-ins the account (or everyone sharing the
+        network address) is locked for the chosen number of minutes. Saved values override the
+        <code>.envmb-index</code> defaults (<code>LOGIN_USER_LIMIT</code>, <code>LOGIN_IP_LIMIT</code>,
+        <code>LOGIN_LOCK_MINUTES</code>). Counting window: 15 minutes.
+        <?php if (array_filter(array_keys(GARS_LOCK_LIMITS), fn ($k) => gars_login_setting_info($k)['source'] === 'database')): ?>
+            <strong>Custom values are currently saved.</strong>
+        <?php endif; ?>
+    </p>
+    <form method="post" action="<?php echo gars_url('itadmin'); ?>">
+        <?php echo gars_csrf_field(); ?>
+        <input type="hidden" name="action" value="save_lockout">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="login_user_limit">Failed sign-ins per account</label>
+                <input type="number" id="login_user_limit" name="login_user_limit" value="<?php echo (int) gars_login_user_limit(); ?>" min="1" max="100" required>
+            </div>
+            <div class="form-group">
+                <label for="login_ip_limit">Failed sign-ins per IP address</label>
+                <input type="number" id="login_ip_limit" name="login_ip_limit" value="<?php echo (int) gars_login_ip_limit(); ?>" min="1" max="500" required>
+            </div>
+            <div class="form-group">
+                <label for="login_lock_minutes">Lock duration (minutes)</label>
+                <input type="number" id="login_lock_minutes" name="login_lock_minutes" value="<?php echo (int) (gars_login_lock_seconds() / 60); ?>" min="1" max="1440" required>
+            </div>
+        </div>
+        <button class="btn" type="submit">Save limits</button>
+    </form>
+    <form method="post" action="<?php echo gars_url('itadmin'); ?>" style="margin-top:10px;"
+          onsubmit="return confirm('Reset the lockout limits to the defaults?');">
+        <?php echo gars_csrf_field(); ?>
+        <input type="hidden" name="action" value="reset_lockout">
+        <button class="btn ghost" type="submit">Reset to defaults</button>
+    </form>
+</div>
 
 <div class="section">
     <h2>Login sessions</h2>

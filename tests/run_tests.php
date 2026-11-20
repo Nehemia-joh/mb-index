@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../config.php';
 require __DIR__ . '/../includes/db.php';
+require __DIR__ . '/../includes/auth.php';
 require __DIR__ . '/../includes/scoring.php';
 
 $pass = 0;
@@ -184,7 +185,7 @@ ok(str_contains($loginSrc, 'gars_login_lock('), 'login handler consults the lock
 ok(str_contains($loginSrc, 'gars_record_login_failure('), 'failed attempts are recorded');
 ok(str_contains($loginSrc, 'gars_csrf_rotate()'), 'token rotates on successful login');
 
-gars_ensure_login_attempts_table();
+gars_ensure_security_tables();
 ok((bool) $db->query("SHOW TABLES LIKE 'login_attempts'")->fetchColumn(), 'login_attempts table exists');
 $db->exec("DELETE FROM login_attempts WHERE username LIKE 'unitlock%' OR ip LIKE '198.51.100.%'");
 ok(gars_login_lock('unitlock_probe', '198.51.100.7') === null, 'clean state is not locked');
@@ -194,13 +195,58 @@ for ($i = 0; $i < 5; $i++) {
 $lock = gars_login_lock('unitlock_probe', '198.51.100.7');
 ok($lock !== null && str_contains($lock, 'Too many failed sign-in attempts'), 'account locked after 5 failures');
 ok(gars_login_lock('unitlock_other', '198.51.100.7') === null, 'other accounts unaffected (IP under limit)');
-for ($i = 0; $i < 20; $i++) {
+for ($i = 0; $i < 60; $i++) {
     gars_record_login_failure('ipflood_' . $i, '198.51.100.8');
 }
-ok(gars_login_lock('ipflood_probe', '198.51.100.8') !== null, 'IP locked after 20 failures from one address');
+ok(gars_login_lock('ipflood_probe', '198.51.100.8') !== null, 'IP locked after 60 failures from one address');
 gars_clear_login_failures('unitlock_probe');
 ok(gars_login_lock('unitlock_probe', '198.51.100.7') === null, 'lock clears after successful-login cleanup');
 $db->exec("DELETE FROM login_attempts WHERE ip LIKE '198.51.100.%'");
+
+echo "== Security: lockout limits (env + panel settings) ==\n";
+$db->exec('DELETE FROM app_settings');
+gars_login_settings_reset();
+ok(gars_login_user_limit() === 5, 'default account limit is 5');
+ok(gars_login_ip_limit() === 60, 'default IP limit is 60 (shared networks tolerated)');
+ok(gars_login_lock_seconds() === 1800, 'default lock is 30 minutes');
+$GLOBALS['GARS_ENV']['LOGIN_USER_LIMIT'] = '9';
+gars_login_settings_reset();
+ok(gars_login_user_limit() === 9, 'env LOGIN_USER_LIMIT honoured');
+unset($GLOBALS['GARS_ENV']['LOGIN_USER_LIMIT']);
+$db->prepare('INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?)')->execute(['login_user_limit', '12']);
+gars_login_settings_reset();
+ok(gars_login_user_limit() === 12, 'database setting beats env and default');
+ok(gars_login_setting_info('login_user_limit')['source'] === 'database', 'source reported as database');
+$db->exec("UPDATE app_settings SET setting_value = '9999' WHERE setting_key = 'login_user_limit'");
+gars_login_settings_reset();
+ok(gars_login_user_limit() === 100, 'value clamped to the maximum');
+$db->exec("UPDATE app_settings SET setting_value = '7' WHERE setting_key = 'login_user_limit'");
+gars_login_settings_reset();
+for ($i = 0; $i < 6; $i++) {
+    gars_record_login_failure('unitlock_probe', '198.51.100.9');
+}
+ok(gars_login_lock('unitlock_probe', '198.51.100.9') === null, 'raised limit: 6 failures not yet locked');
+gars_record_login_failure('unitlock_probe', '198.51.100.9');
+ok(gars_login_lock('unitlock_probe', '198.51.100.9') !== null, 'raised limit: 7 failures locked');
+$adminId = (int) $db->query("SELECT id FROM users WHERE username = 'admin'")->fetchColumn();
+gars_save_login_setting('login_ip_limit', 90, $adminId);
+ok(gars_login_ip_limit() === 90, 'panel save helper persists a value');
+gars_delete_login_settings();
+ok(gars_login_user_limit() === 5 && gars_login_ip_limit() === 60, 'defaults return after reset');
+$db->exec("DELETE FROM login_attempts WHERE ip LIKE '198.51.100.%'");
+
+echo "== Security: setting a password clears the failure counter ==\n";
+$db->exec('DELETE FROM users WHERE username = "unitpass_e2e"');
+for ($i = 0; $i < 5; $i++) {
+    $db->prepare('INSERT INTO login_attempts (ip, username, attempted_at) VALUES (?, ?, ?)')
+        ->execute(['198.51.100.11', 'unitpass_e2e', date('Y-m-d H:i:s')]);
+}
+ok(gars_login_lock('unitpass_e2e', '198.51.100.12') !== null, 'probe account locked before the password change');
+$uid = gars_create_user('unitpass_e2e', 'UnitPass!2026', 'therapist', 'Unit Pass');
+ok($uid > 0, 'probe account created with a new password');
+ok(gars_login_lock('unitpass_e2e', '198.51.100.12') === null, 'failure counter reset when the password is set');
+$db->exec('DELETE FROM users WHERE username = "unitpass_e2e"');
+$db->exec("DELETE FROM login_attempts WHERE username = 'unitpass_e2e'");
 
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

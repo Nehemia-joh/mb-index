@@ -136,12 +136,21 @@ function gars_csrf_check(): void
 
 /* ------------------------------------------------------- brute force lock */
 
-/** Thresholds: 5 failures per account or 20 per IP inside 15 minutes →
- *  locked for 30 minutes from the most recent recorded failure. */
-const GARS_LOCK_LIMIT      = 5;
-const GARS_LOCK_IP_LIMIT   = 20;
-const GARS_LOCK_WINDOW     = 900;   // seconds (rolling count window)
-const GARS_LOCK_HOLD       = 1800;  // seconds (how long the lock lasts)
+/** Rolling count window shared by the account and IP limits (seconds). */
+const GARS_LOCK_WINDOW = 900; // 15 minutes
+
+/**
+ * Active lockout limits, in precedence order:
+ *   1. app_settings row (saved from the /itadmin panel)
+ *   2. LOGIN_* key in the .envmb-index
+ *   3. the defaults below
+ * Each spec: env key, default, clamp min/max.
+ */
+const GARS_LOCK_LIMITS = [
+    'login_user_limit'   => ['env' => 'LOGIN_USER_LIMIT',     'def' => 5,  'min' => 1, 'max' => 100],
+    'login_ip_limit'     => ['env' => 'LOGIN_IP_LIMIT',       'def' => 60, 'min' => 1, 'max' => 500],
+    'login_lock_minutes' => ['env' => 'LOGIN_LOCK_MINUTES',   'def' => 30, 'min' => 1, 'max' => 1440],
+];
 
 /** Bounded, always-UTF-8-safe key for storing/looking up a posted username. */
 function gars_lock_key(string $value, int $max = 191): string
@@ -154,7 +163,7 @@ function gars_lock_key(string $value, int $max = 191): string
     return substr($ascii, 0, $max);
 }
 
-function gars_ensure_login_attempts_table(): void
+function gars_ensure_security_tables(): void
 {
     static $done = false;
     if ($done) {
@@ -171,6 +180,112 @@ function gars_ensure_login_attempts_table(): void
             KEY idx_la_ip_time (ip, attempted_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    gars_db()->exec(
+        'CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key    VARCHAR(64)  PRIMARY KEY,
+            setting_value  VARCHAR(255) NOT NULL,
+            updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            updated_by     INT UNSIGNED DEFAULT NULL,
+            CONSTRAINT fk_settings_editor FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+}
+
+/** Drop the per-request settings cache (panel saves and unit tests). */
+function gars_login_settings_reset(): void
+{
+    unset($GLOBALS['GARS_LOGIN_SETTINGS_CACHE']);
+}
+
+/**
+ * Effective value for one lockout limit: database override → env → default,
+ * always clamped to the spec's range. Returns ['value' => int, 'source' => 'database'|'env'|'default'].
+ */
+function gars_login_setting_info(string $key): array
+{
+    $spec = GARS_LOCK_LIMITS[$key] ?? null;
+    if ($spec === null) {
+        throw new InvalidArgumentException('Unknown lockout setting: ' . $key);
+    }
+    $cache = $GLOBALS['GARS_LOGIN_SETTINGS_CACHE'] ?? [];
+    if (isset($cache[$key])) {
+        return $cache[$key];
+    }
+
+    $value = null;
+    $source = 'default';
+    try {
+        gars_ensure_security_tables();
+        $stmt = gars_db()->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?');
+        $stmt->execute([$key]);
+        $row = $stmt->fetch();
+        if ($row) {
+            $dbValue = filter_var($row['setting_value'], FILTER_VALIDATE_INT);
+            if ($dbValue !== false) {
+                $value = (int) $dbValue;
+                $source = 'database';
+            }
+        }
+    } catch (Throwable $e) {
+        $value = null; // table missing / no DB — fall through to env
+    }
+    if ($value === null) {
+        $env = env($spec['env']);
+        if (is_numeric($env)) {
+            $value = (int) $env;
+            $source = 'env';
+        } else {
+            $value = $spec['def'];
+        }
+    }
+    $value = max($spec['min'], min($spec['max'], $value));
+    $result = ['value' => $value, 'source' => $source];
+    $GLOBALS['GARS_LOGIN_SETTINGS_CACHE'][$key] = $result;
+    return $result;
+}
+
+function gars_login_setting(string $key): int
+{
+    return gars_login_setting_info($key)['value'];
+}
+
+function gars_login_user_limit(): int
+{
+    return gars_login_setting('login_user_limit');
+}
+
+function gars_login_ip_limit(): int
+{
+    return gars_login_setting('login_ip_limit');
+}
+
+/** Lock duration in seconds (login_lock_minutes × 60). */
+function gars_login_lock_seconds(): int
+{
+    return gars_login_setting('login_lock_minutes') * 60;
+}
+
+/** Persist one limit from the /itadmin panel. */
+function gars_save_login_setting(string $key, int $value, int $adminId): void
+{
+    if (!isset(GARS_LOCK_LIMITS[$key])) {
+        throw new InvalidArgumentException('Unknown lockout setting: ' . $key);
+    }
+    gars_ensure_security_tables();
+    $stmt = gars_db()->prepare(
+        'INSERT INTO app_settings (setting_key, setting_value, updated_by) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)'
+    );
+    $stmt->execute([$key, (string) $value, $adminId]);
+    gars_login_settings_reset();
+}
+
+/** Remove all panel overrides so env/defaults apply again. */
+function gars_delete_login_settings(): void
+{
+    gars_ensure_security_tables();
+    gars_db()->exec('DELETE FROM app_settings');
+    gars_login_settings_reset();
 }
 
 /**
@@ -178,15 +293,16 @@ function gars_ensure_login_attempts_table(): void
  * or null when the attempt may proceed. Keyed by the posted username string
  * (existing or not) and by REMOTE_ADDR only — never the spoofable XFF header.
  * While locked no new rows are recorded, so the lock always ends exactly
- * GARS_LOCK_HOLD after the failure that triggered it.
+ * the configured number of minutes after the failure that triggered it.
  */
 function gars_login_lock(?string $username, string $ip): ?string
 {
-    gars_ensure_login_attempts_table();
+    gars_ensure_security_tables();
     $db = gars_db();
     $db->exec('DELETE FROM login_attempts WHERE attempted_at < (NOW() - INTERVAL 1 DAY)');
+    $hold = gars_login_lock_seconds();
 
-    $locked = function (string $column, string $value, int $limit, string $who): ?string {
+    $locked = function (string $column, string $value, int $limit, string $who) use ($hold): ?string {
         $since = date('Y-m-d H:i:s', time() - GARS_LOCK_WINDOW);
         $stmt = gars_db()->prepare(
             'SELECT COUNT(*) AS n, MAX(attempted_at) AS last_at
@@ -197,7 +313,7 @@ function gars_login_lock(?string $username, string $ip): ?string
         if (!$row || (int) $row['n'] < $limit) {
             return null;
         }
-        $until = strtotime((string) $row['last_at']) + GARS_LOCK_HOLD;
+        $until = strtotime((string) $row['last_at']) + $hold;
         if (time() >= $until) {
             return null;
         }
@@ -208,14 +324,14 @@ function gars_login_lock(?string $username, string $ip): ?string
 
     $userKey = $username !== null && $username !== '' ? gars_lock_key($username) : '';
     if ($userKey !== '') {
-        $msg = $locked('username', $userKey, GARS_LOCK_LIMIT, 'this account');
+        $msg = $locked('username', $userKey, gars_login_user_limit(), 'this account');
         if ($msg !== null) {
             return $msg;
         }
     }
     $ip = substr($ip, 0, 45);
     if ($ip !== '') {
-        $msg = $locked('ip', $ip, GARS_LOCK_IP_LIMIT, 'from your network');
+        $msg = $locked('ip', $ip, gars_login_ip_limit(), 'from your network');
         if ($msg !== null) {
             return $msg;
         }
@@ -225,7 +341,7 @@ function gars_login_lock(?string $username, string $ip): ?string
 
 function gars_record_login_failure(string $username, string $ip): void
 {
-    gars_ensure_login_attempts_table();
+    gars_ensure_security_tables();
     $stmt = gars_db()->prepare(
         'INSERT INTO login_attempts (ip, username, attempted_at) VALUES (?, ?, ?)'
     );
@@ -236,10 +352,14 @@ function gars_record_login_failure(string $username, string $ip): void
     ]);
 }
 
-/** Called after a successful sign-in so a small slip-up never lingers. */
+/**
+ * Reset the failed-attempt counter for one account. Called after a successful
+ * sign-in AND whenever a password is (re)set — a fresh password wipes any
+ * pending lockout state for that username.
+ */
 function gars_clear_login_failures(string $username): void
 {
-    gars_ensure_login_attempts_table();
+    gars_ensure_security_tables();
     $stmt = gars_db()->prepare('DELETE FROM login_attempts WHERE username = ?');
     $stmt->execute([gars_lock_key($username)]);
 }

@@ -126,6 +126,13 @@ function gars_setup_tables(PDO $db): void
             KEY idx_la_user_time (username, attempted_at),
             KEY idx_la_ip_time (ip, attempted_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key VARCHAR(64) PRIMARY KEY,
+            setting_value VARCHAR(255) NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            updated_by INT UNSIGNED DEFAULT NULL,
+            CONSTRAINT fk_settings_editor FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($ddl as $sql) {
         $db->exec($sql);

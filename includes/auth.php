@@ -62,7 +62,11 @@ function gars_create_user(string $username, string $password, string $role, stri
         $role,
         $mustChange ? 1 : 0,
     ]);
-    return (int) gars_db()->lastInsertId();
+    // capture the id first: the ensure/DELETE below would reset LAST_INSERT_ID()
+    $newId = (int) gars_db()->lastInsertId();
+    // a newly set password wipes any failed-attempt/lockout state for this name
+    gars_clear_login_failures($username);
+    return $newId;
 }
 
 /* --------------------------------------------------------------- sessions */

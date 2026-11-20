@@ -33,6 +33,7 @@ sql() { mysql -u fallback_change_me -pfallback_change_me maishabora_gars3 -N -B 
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
 sql "DELETE FROM login_attempts";
+sql "DELETE FROM app_settings";
 
 # ---------------------------------------------------------------- start server
 pkill -f "php -S 127.0.0.1:8123" 2>/dev/null
@@ -352,6 +353,42 @@ else
   fail "CSRF rejections are recorded in the activity trail"
 fi
 
+# IT admin panel: lockout limits (raise, prove the effect, reset)
+CODE=$(curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin.html" -w "%{http_code}" "$BASE/itadmin")
+check "it admin opens /itadmin" "200" "$CODE"
+contains "lockout card is on the console" "$OUT/itadmin.html" "Login lockout"
+contains "default account limit shown" "$OUT/itadmin.html" 'name="login_user_limit" value="5"'
+contains "default IP limit shown" "$OUT/itadmin.html" 'name="login_ip_limit" value="60"'
+contains "default lock duration shown" "$OUT/itadmin.html" 'name="login_lock_minutes" value="30"'
+
+curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin-saved.html" -L \
+  -d "action=save_lockout&login_user_limit=7&login_ip_limit=90&login_lock_minutes=45&csrf_token=$ATOK" \
+  "$BASE/itadmin"
+contains "raised account limit shown after save" "$OUT/itadmin-saved.html" 'name="login_user_limit" value="7"'
+contains "raised IP limit shown after save" "$OUT/itadmin-saved.html" 'name="login_ip_limit" value="90"'
+contains "raised lock duration shown after save" "$OUT/itadmin-saved.html" 'name="login_lock_minutes" value="45"'
+contains "page flags that custom values are saved" "$OUT/itadmin-saved.html" "Custom values are currently saved"
+contains "save confirmation flash shown" "$OUT/itadmin-saved.html" "Login lockout limits saved"
+check "settings stored in the database" "90|45|7" \
+  "$(sql "SELECT GROUP_CONCAT(setting_value ORDER BY setting_key SEPARATOR '|') FROM app_settings WHERE setting_key IN ('login_ip_limit','login_lock_minutes','login_user_limit')")"
+
+# the raised account limit must actually apply: 6 failures stay under 7
+sql "DELETE FROM login_attempts WHERE username='lockprobe_e2e'"
+rm -f "$PJAR"
+PTOK=$(curl -s -c "$PJAR" "$BASE/login" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -b "$PJAR" -c "$PJAR" -d "username=lockprobe_e2e&password=Wrong$i&csrf_token=$PTOK" "$BASE/login"
+done
+check "6 failures recorded under the raised limit" "6" "$(sql "SELECT COUNT(*) FROM login_attempts WHERE username='lockprobe_e2e'")"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$PJAR" -c "$PJAR" -d "username=lockprobe_e2e&password=LockProbePass1&csrf_token=$PTOK" "$BASE/login")
+check "raised limit lets the account through after 6 failures" "302" "$CODE"
+
+curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin-reset.html" -L \
+  -d "action=reset_lockout&csrf_token=$ATOK" "$BASE/itadmin"
+contains "defaults restored after reset" "$OUT/itadmin-reset.html" 'name="login_user_limit" value="5"'
+contains "reset confirmation flash shown" "$OUT/itadmin-reset.html" "reset to the defaults"
+check "database overrides removed on reset" "0" "$(sql "SELECT COUNT(*) FROM app_settings")"
+
 # ---------------------------------------------------------------- cleanup
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
@@ -361,6 +398,7 @@ if [ -n "$LID" ]; then
 fi
 sql "DELETE FROM users WHERE username='lockprobe_e2e'";
 sql "DELETE FROM login_attempts";
+sql "DELETE FROM app_settings";
 sql "DELETE FROM activity_logs WHERE details LIKE '%lockprobe_e2e%' OR action IN ('csrf_blocked','login_blocked')";
 sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('admin2e2e','testere2e'))";
 sql "DELETE FROM activity_logs WHERE username IN ('admin2e2e','testere2e')";
