@@ -118,6 +118,14 @@ function gars_setup_tables(PDO $db): void
             CONSTRAINT fk_scoring_creator FOREIGN KEY (created_by) REFERENCES users(id),
             CONSTRAINT fk_scoring_decider FOREIGN KEY (decided_by) REFERENCES users(id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS login_attempts (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            ip VARCHAR(45) NOT NULL,
+            username VARCHAR(191) NOT NULL,
+            attempted_at DATETIME NOT NULL,
+            KEY idx_la_user_time (username, attempted_at),
+            KEY idx_la_ip_time (ip, attempted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($ddl as $sql) {
         $db->exec($sql);

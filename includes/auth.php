@@ -76,7 +76,7 @@ function gars_current_user(): ?array
     }
     $cached = true;
     if (session_status() !== PHP_SESSION_ACTIVE) {
-        @session_start();
+        gars_session_start();
     }
     if (empty($_SESSION['gars_user'])) {
         return $user = null;

@@ -16,7 +16,9 @@ define('GARS_ROUTE', 'score');
 $currentUser = gars_require_login();
 
 // --- process form submission -------------------------------------------------
-
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    gars_csrf_check();
+}
 
 // --- process form submission -------------------------------------------------
 $individualName = trim($_POST['individual_name'] ?? '');
@@ -66,6 +68,7 @@ if ($missing) {
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0B5CAF">
+    <meta name="csrf-token" content="<?php echo htmlspecialchars(gars_csrf_token(), ENT_QUOTES); ?>">
     <?php gars_favicon_links(); ?>
     <title>Nothing was saved</title>
 <?php gars_styles(); ?>
@@ -155,6 +158,7 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0B5CAF">
+    <meta name="csrf-token" content="<?php echo htmlspecialchars(gars_csrf_token(), ENT_QUOTES); ?>">
     <?php gars_favicon_links(); ?>
     <title>Scoring report</title>
     <?php gars_styles(); ?>

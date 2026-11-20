@@ -10,7 +10,7 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/tracker.php';
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
-    @session_start();
+    gars_session_start();
 }
 
 if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['gars_user'])) {

@@ -30,6 +30,10 @@ The gaps are around **the login door and browser hardening**: no brute-force
 protection, no CSRF tokens, insecure session-cookie flags, and missing security
 headers.
 
+> **Update (same day):** the four P0 findings (F-01, F-02, F-03, F-06) have been
+> implemented and verified — see the **P0 implemented** log at the end of §3.
+> F-04 (security headers), F-05, F-07…F-11 remain open for the P1 pass.
+
 ### Top findings
 
 | # | Severity | Finding | Checklist item |
@@ -210,9 +214,26 @@ testing.)
 15. F-16 — CAPTCHA on login after N failures; logout via POST.
 16. Monitoring — a nightly query/alert on `login_failed` bursts; write a one-page IR runbook.
 
+### ✅ P0 implemented — 20 November 2026
+
+| Finding | Fix | Verified by |
+|---|---|---|
+| **F-01** brute force | New `includes/security.php`: 5 failed logins per account (or 20 per `REMOTE_ADDR`) inside 15 min → locked 30 min from the last failure; while locked even the correct password is refused; lockout + CSRF rejections logged to the trail; cleared on successful login. `login_attempts` table added to `setup.php`, `newdeploy.sql` and created on demand. | e2e: *5 failed attempts recorded*, *account locked after 5 failures*, *correct password refused while locked*, *login works again once attempts are cleared*, *lockout events recorded*; unit ×6 |
+| **F-02** cookie flags | `gars_session_start()` is now the only way sessions start (all 5 call sites migrated): `HttpOnly`, `SameSite=Lax`, `Secure` whenever the request is HTTPS, `session.use_strict_mode` on. | e2e: *session cookie is HttpOnly / sets SameSite=Lax*; unit ×6 (no raw `@session_start()` left) |
+| **F-03** CSRF tokens | Per-session 64-hex token: `<meta name="csrf-token">` on every page head, `gars_csrf_field()` in every POST form (login, register, rating form, all four scoring-table forms), `gars_csrf_check()` first in all five POST handlers → 403 + `csrf_blocked` trail entry; token rotated on successful login. | e2e: *login/scoring POST without token gets 403* + full suite drives every POST with tokens; unit ×13 |
+| **F-06** HTTPS | `gars_force_https()` runs from `config.php` on every request: 301 → HTTPS for any non-loopback host, `Strict-Transport-Security` once on HTTPS, `FORCE_HTTPS=0` env escape hatch; localhost/127.0.0.1 exempt for dev. | e2e: *public host redirected with 301*, *redirect target forces HTTPS*; unit |
+
+**Test totals after P0: 83 unit + 101 E2E = 184 passing, 0 failing.**
+Next: P1 — security headers/CSP (F-04), timing-safe login (F-05), block `tests/`
++ `Options -Indexes` (F-07/08), server-side idle timeout (F-09), bcrypt cost 12
+(F-11).
+
 ---
 
 ## 4. Test evidence appendix (raw observations)
+
+> Recorded **before** the P0 remediation above — kept as the audit baseline.
+> Post-fix verification lives in the P0 log (§3) and in the test suites.
 
 ```
 == Headers (GET /login) ==

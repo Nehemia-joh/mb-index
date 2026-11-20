@@ -39,6 +39,7 @@ if (!$rec || ($currentUser['role'] === 'therapist' && (int) $rec['created_by'] !
 
 // --- POST: validate, recalculate and update the existing row -----------------
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    gars_csrf_check();
     $individualName = trim($_POST['individual_name'] ?? '');
     $school = trim($_POST['school'] ?? '');
     $raterName = trim($_POST['rater_name'] ?? '');
@@ -210,6 +211,7 @@ gars_track_page('page_visit', "Edit form for record #$id");
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0B5CAF">
+    <meta name="csrf-token" content="<?php echo htmlspecialchars(gars_csrf_token(), ENT_QUOTES); ?>">
     <?php gars_favicon_links(); ?>
     <title>Edit record #<?php echo $id; ?></title>
     <?php gars_styles(); ?>

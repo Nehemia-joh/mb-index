@@ -64,3 +64,8 @@ define('SESSION_TIMEOUT', (int) env('SESSION_TIMEOUT', 7200));
 
 /* Roles the application knows about */
 $GARS_ROLES = ['therapist' => 'Therapist', 'admin' => 'Administrator', 'it_admin' => 'IT System Administrator'];
+
+/* Security helpers (HTTPS enforcement, session cookies, CSRF, login lockout).
+   Loaded last so env() and the constants above already exist. */
+require_once __DIR__ . '/includes/security.php';
+gars_force_https();

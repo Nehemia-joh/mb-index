@@ -25,6 +25,7 @@ $posted = [];
 $missing = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    gars_csrf_check();
     $posted = [
         'new_username' => trim($_POST['new_username'] ?? ''),
         'new_password' => $_POST['new_password'] ?? '',
@@ -99,6 +100,7 @@ function gars_role_select(array $roles, string $selected): void
     <div class="section" style="border-top:none;">
         <?php if ($error): ?><div class="notice notice-error"><?php echo gars_e($error); ?></div><?php endif; ?>
         <form method="post" action="<?php echo gars_url('register'); ?>" autocomplete="off">
+            <?php echo gars_csrf_field(); ?>
             <div class="form-row">
                 <div class="form-group">
                     <label for="new_username">Username <span class="req">*</span></label>

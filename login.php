@@ -33,28 +33,38 @@ $missing = gars_validate_required(
 $flash = gars_flash();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    gars_csrf_check();
     if ($missing) {
         $error = 'Please fill in every required field: ' . implode(', ', $missing) . '.';
     } else {
-        $user = gars_find_user($username);
-        if ($user && (int) $user['is_active'] && password_verify($password, $user['password_hash'])) {
-            // successful login — register the session in the database
-            session_regenerate_id(true);
-            $_SESSION['gars_user'] = [
-                'id' => (int) $user['id'],
-                'username' => $user['username'],
-                'role' => $user['role'],
-                'full_name' => $user['full_name'],
-            ];
-            gars_db()->prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
-                ->execute([date('Y-m-d H:i:s'), $user['id']]);
-            gars_log_activity('login', 'login', 'Logged in as ' . $user['username'] . ' (' . $user['role'] . ')');
-            gars_track_page('page_visit');
-            gars_flash('Welcome back, ' . $user['full_name'] . '!');
-            gars_redirect(gars_url(gars_home_route($user)));
+        $lockMessage = gars_login_lock($username, $_SERVER['REMOTE_ADDR'] ?? '');
+        if ($lockMessage !== null) {
+            $error = $lockMessage;
+            gars_log_activity('login_blocked', 'login', 'Blocked sign-in attempt (lockout active) for "' . gars_lock_key($username) . '"');
+        } else {
+            $user = gars_find_user($username);
+            if ($user && (int) $user['is_active'] && password_verify($password, $user['password_hash'])) {
+                // successful login — register the session in the database
+                gars_clear_login_failures($username);
+                session_regenerate_id(true);
+                gars_csrf_rotate();
+                $_SESSION['gars_user'] = [
+                    'id' => (int) $user['id'],
+                    'username' => $user['username'],
+                    'role' => $user['role'],
+                    'full_name' => $user['full_name'],
+                ];
+                gars_db()->prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+                    ->execute([date('Y-m-d H:i:s'), $user['id']]);
+                gars_log_activity('login', 'login', 'Logged in as ' . $user['username'] . ' (' . $user['role'] . ')');
+                gars_track_page('page_visit');
+                gars_flash('Welcome back, ' . $user['full_name'] . '!');
+                gars_redirect(gars_url(gars_home_route($user)));
+            }
+            $error = 'That username and password do not match an account.';
+            gars_log_activity('login_failed', 'login', 'Failed login attempt for "' . $username . '"');
+            gars_record_login_failure($username, $_SERVER['REMOTE_ADDR'] ?? '');
         }
-        $error = 'That username and password do not match an account.';
-        gars_log_activity('login_failed', 'login', 'Failed login attempt for "' . $username . '"');
     }
 }
 
@@ -70,6 +80,7 @@ gars_header('Sign in', 'login', false);
     <?php if ($flash): ?><div class="notice notice-<?php echo gars_e($flash['type']); ?>"><?php echo gars_e($flash['message']); ?></div><?php endif; ?>
 
     <form method="post" action="<?php echo gars_url('login'); ?>" autocomplete="off">
+        <?php echo gars_csrf_field(); ?>
         <div class="form-group" style="margin-bottom:14px;">
             <label for="username">Username <span class="req">*</span></label>
             <input type="text" id="username" name="username" required

@@ -148,5 +148,59 @@ ok(str_contains($routeSrc, "'sessions.php'") && str_contains($routeSrc, "'activi
 echo "== Schema ==\n";
 ok((bool) $db->query("SHOW TABLES LIKE 'scoring_revisions'")->fetchColumn(), 'scoring_revisions table exists');
 
+echo "== Security: CSRF tokens ==\n";
+$secSrc = file_get_contents(__DIR__ . '/../includes/security.php');
+$loginSrc = file_get_contents(__DIR__ . '/../login.php');
+$cfgSrc = file_get_contents(__DIR__ . '/../config.php');
+$token = gars_csrf_token();
+ok(preg_match('/^[a-f0-9]{64}$/', $token) === 1, 'csrf token is 64 hex chars');
+ok(gars_csrf_token() === $token, 'csrf token is stable within the session');
+ok(str_contains(gars_csrf_field(), $token), 'csrf field carries the session token');
+$before = gars_csrf_token();
+gars_csrf_rotate();
+ok(gars_csrf_token() !== $before, 'token rotates after a successful login');
+foreach (['login.php', 'register.php', 'includes/rating_form.php', 'scoring_tables.php'] as $formFile) {
+    $src = file_get_contents(__DIR__ . '/../' . $formFile);
+    ok(str_contains($src, 'gars_csrf_field()'), "$formFile renders the CSRF field");
+}
+foreach (['login.php', 'register.php', 'edit.php', 'score.php', 'scoring_tables.php'] as $postFile) {
+    $src = file_get_contents(__DIR__ . '/../' . $postFile);
+    ok(str_contains($src, 'gars_csrf_check()'), "$postFile enforces the CSRF check on POST");
+}
+
+echo "== Security: session cookies, HTTPS, lockout ==\n";
+ok(str_contains($secSrc, "'httponly' => true") && str_contains($secSrc, "'samesite' => 'Lax'"),
+    'session cookie is HttpOnly + SameSite=Lax');
+ok(str_contains($secSrc, 'gars_is_https()') && str_contains($secSrc, "'secure'"),
+    'session cookie becomes Secure on HTTPS');
+ok(str_contains($secSrc, 'Strict-Transport-Security'), 'HSTS header sent once on HTTPS');
+ok(str_contains($secSrc, 'FORCE_HTTPS') && str_contains($cfgSrc, 'gars_force_https()'),
+    'HTTPS enforced on every request via config');
+foreach (['includes/auth.php', 'includes/tracker.php', 'includes/ui.php', 'logout.php'] as $sessFile) {
+    $src = file_get_contents(__DIR__ . '/../' . $sessFile);
+    ok(!str_contains($src, '@session_start()'), "$sessFile starts sessions only via gars_session_start");
+}
+ok(str_contains($loginSrc, 'gars_login_lock('), 'login handler consults the lockout');
+ok(str_contains($loginSrc, 'gars_record_login_failure('), 'failed attempts are recorded');
+ok(str_contains($loginSrc, 'gars_csrf_rotate()'), 'token rotates on successful login');
+
+gars_ensure_login_attempts_table();
+ok((bool) $db->query("SHOW TABLES LIKE 'login_attempts'")->fetchColumn(), 'login_attempts table exists');
+$db->exec("DELETE FROM login_attempts WHERE username LIKE 'unitlock%' OR ip LIKE '198.51.100.%'");
+ok(gars_login_lock('unitlock_probe', '198.51.100.7') === null, 'clean state is not locked');
+for ($i = 0; $i < 5; $i++) {
+    gars_record_login_failure('unitlock_probe', '198.51.100.7');
+}
+$lock = gars_login_lock('unitlock_probe', '198.51.100.7');
+ok($lock !== null && str_contains($lock, 'Too many failed sign-in attempts'), 'account locked after 5 failures');
+ok(gars_login_lock('unitlock_other', '198.51.100.7') === null, 'other accounts unaffected (IP under limit)');
+for ($i = 0; $i < 20; $i++) {
+    gars_record_login_failure('ipflood_' . $i, '198.51.100.8');
+}
+ok(gars_login_lock('ipflood_probe', '198.51.100.8') !== null, 'IP locked after 20 failures from one address');
+gars_clear_login_failures('unitlock_probe');
+ok(gars_login_lock('unitlock_probe', '198.51.100.7') === null, 'lock clears after successful-login cleanup');
+$db->exec("DELETE FROM login_attempts WHERE ip LIKE '198.51.100.%'");
+
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

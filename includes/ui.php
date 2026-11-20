@@ -49,7 +49,7 @@ function gars_favicon_links(): void
 function gars_flash(?string $message = null, string $type = 'success'): ?array
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
-        @session_start();
+        gars_session_start();
     }
     if ($message !== null) {
         $_SESSION['gars_flash'] = ['message' => $message, 'type' => $type];
@@ -273,6 +273,7 @@ function gars_header(string $title, string $active = '', bool $fullContainer = t
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#0B5CAF">
+<meta name="csrf-token" content="<?php echo htmlspecialchars(gars_csrf_token(), ENT_QUOTES); ?>">
 <?php gars_favicon_links(); ?>
 <title><?php echo gars_e($title); ?></title>
 <?php gars_styles(); ?>

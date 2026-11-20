@@ -225,6 +225,7 @@ function gars_rating_form_body(string $actionUrl, string $submitLabel = 'Score a
     $markVal = static fn (string $sid, int $qi): ?int => isset($marks[$sid . '_item_' . $qi]) ? (int) $marks[$sid . '_item_' . $qi] : null;
     ?>
     <form action="<?php echo gars_e($actionUrl); ?>" method="POST" id="rating-form">
+        <?php echo gars_csrf_field(); ?>
         <div class="sheet">
 
             <!-- Section 1: Identifying Information -->

@@ -21,3 +21,18 @@ CREATE TABLE IF NOT EXISTS scoring_revisions (
     CONSTRAINT fk_scoring_creator FOREIGN KEY (created_by) REFERENCES users(id),
     CONSTRAINT fk_scoring_decider FOREIGN KEY (decided_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Brute-force protection for /login: per-account (5) and per-IP (20) failed
+-- attempt counters inside a 15-minute window (see includes/security.php).
+-- The application also creates this table on demand (IF NOT EXISTS).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ip           VARCHAR(45)   NOT NULL,
+    username     VARCHAR(191)  NOT NULL,
+    attempted_at DATETIME      NOT NULL,
+    KEY idx_la_user_time (username, attempted_at),
+    KEY idx_la_ip_time (ip, attempted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

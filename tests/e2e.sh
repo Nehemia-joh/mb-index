@@ -4,8 +4,9 @@
 # Covers: wording/title/age JS, therapist form scoring, scoring-table
 # edit + four-eyes approval, global effect of an approved revision,
 # validation failures, role guards, version labels (v1.0, v1.1, …),
-# restoring an older version from the history, sessions-by-user page
-# and the filterable activity log (403 for therapists).
+# restoring an older version from the history, sessions-by-user page,
+# the filterable activity log (403 for therapists) and the P0 security
+# hardening (CSRF tokens, cookie flags, HTTPS redirect, login lockout).
 set -u
 
 BASE=http://127.0.0.1:8123
@@ -31,6 +32,7 @@ sql() { mysql -u fallback_change_me -pfallback_change_me maishabora_gars3 -N -B 
 # ---------------------------------------------------------------- clean slate
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
+sql "DELETE FROM login_attempts";
 
 # ---------------------------------------------------------------- start server
 pkill -f "php -S 127.0.0.1:8123" 2>/dev/null
@@ -43,12 +45,21 @@ if ! curl -s -o /dev/null "$BASE/login"; then
 fi
 
 # ---------------------------------------------------------------- helpers
+token() { # token <jar> <page> — this session's CSRF token (from the page meta)
+  curl -s -c "$1" -b "$1" "$2" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1
+}
 login() { # login <jar> <user> <pass>
   rm -f "$1"
-  curl -s -c "$1" -b "$1" -o /dev/null -d "username=$2&password=$3" "$BASE/login"
+  local tok
+  tok=$(curl -s -c "$1" -b "$1" "$BASE/login" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+  curl -s -c "$1" -b "$1" -o /dev/null \
+    --data-urlencode "username=$2" \
+    --data-urlencode "password=$3" \
+    --data-urlencode "csrf_token=$tok" \
+    "$BASE/login"
 }
 assess_post() { # assess_post <jar> <name>  -> body of the scoring report
-  local jar=$1 name=$2 data=""
+  local jar=$1 name=$2 data="" tok
   data="individual_name=$name&school=E2E-School&rater_name=E2E+Rater&rater_title=Therapist"
   data="$data&date_of_birth=2017-03-14&age=8&gender=Male&grade=3"
   data="$data&examiner_name=E2E+Examiner&examiner_title=Clinician"
@@ -60,20 +71,22 @@ assess_post() { # assess_post <jar> <name>  -> body of the scoring report
   for i in $(seq 0 7);  do data="$data&er_item_$i=2"; done
   for i in $(seq 0 6);  do data="$data&cs_item_$i=2"; done
   for i in $(seq 0 6);  do data="$data&ms_item_$i=2"; done
-  curl -s -c "$jar" -b "$jar" -d "$data" "$BASE/score"
+  tok=$(token "$jar" "$BASE/index")
+  curl -s -c "$jar" -b "$jar" -d "$data&csrf_token=$tok" "$BASE/score"
 }
 
 echo "== setup: test accounts =="
 login "$JAR/admin.jar" admin 'ChangeMe2026!'
+ATOK=$(token "$JAR/admin.jar" "$BASE/scoring-tables")
 if [ "$(sql "SELECT COUNT(*) FROM users WHERE username='admin2e2e'")" = "0" ]; then
   curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/register-admin2.html" \
-    -d "new_username=admin2e2e&new_password=E2eAdminPass&confirm=E2eAdminPass&full_name=E2E+Second+Admin&role=it_admin" \
+    -d "new_username=admin2e2e&new_password=E2eAdminPass&confirm=E2eAdminPass&full_name=E2E+Second+Admin&role=it_admin&csrf_token=$ATOK" \
     "$BASE/register"
   check "register second it_admin" "1" "$(sql "SELECT COUNT(*) FROM users WHERE username='admin2e2e' AND role='it_admin'")"
 fi
 if [ "$(sql "SELECT COUNT(*) FROM users WHERE username='testere2e'")" = "0" ]; then
   curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/register-therapist.html" \
-    -d "new_username=testere2e&new_password=E2eTherPass&confirm=E2eTherPass&full_name=E2E+Therapist&role=therapist" \
+    -d "new_username=testere2e&new_password=E2eTherPass&confirm=E2eTherPass&full_name=E2E+Therapist&role=therapist&csrf_token=$ATOK" \
     "$BASE/register"
   check "register therapist" "1" "$(sql "SELECT COUNT(*) FROM users WHERE username='testere2e' AND role='therapist'")"
 fi
@@ -82,6 +95,8 @@ fi
 login "$JAR/therapist.jar" testere2e 'E2eTherPass'
 login "$JAR/admin.jar" admin 'ChangeMe2026!'
 login "$JAR/admin2.jar" admin2e2e 'E2eAdminPass'
+ATOK=$(token "$JAR/admin.jar" "$BASE/scoring-tables")
+ATOK2=$(token "$JAR/admin2.jar" "$BASE/scoring-tables")
 
 CODE=$(curl -s -c "$JAR/therapist.jar" -b "$JAR/therapist.jar" -o "$OUT/ther-scoring.html" -w "%{http_code}" "$BASE/scoring-tables")
 check "therapist blocked from /scoring-tables" "403" "$CODE"
@@ -120,6 +135,7 @@ curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/submit1.html" -L \
   --data-urlencode "kind=table_b" \
   --data-urlencode "note=E2E-B change sum65 percentile to 88" \
   --data-urlencode "payload=$TBLB" \
+  --data-urlencode "csrf_token=$ATOK" \
   "$BASE/scoring-tables"
 contains "proposal saved as pending" "$OUT/submit1.html" "saved as revision"
 REV1=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'E2E-B%' AND status='pending'")
@@ -127,7 +143,7 @@ REV1=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'E2E-B%' AND
 
 # ---------------------------------------------------------------- four-eyes: own approval blocked
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/own-approve.html" -L \
-  -d "action=approve&id=$REV1" "$BASE/scoring-tables"
+  -d "action=approve&id=$REV1&csrf_token=$ATOK" "$BASE/scoring-tables"
 contains "own approval is refused" "$OUT/own-approve.html" "your own change"
 check "revision still pending after self-approve attempt" "pending" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV1")"
 
@@ -138,6 +154,7 @@ curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/bad-table.html" \
   --data-urlencode "kind=table_a" \
   --data-urlencode "note=E2E-bad" \
   --data-urlencode "payload=$BAD" \
+  --data-urlencode "csrf_token=$ATOK" \
   "$BASE/scoring-tables"
 contains "inverted range rejected with a message" "$OUT/bad-table.html" "low ≤ high"
 check "invalid proposal not stored" "0" "$(sql "SELECT COUNT(*) FROM scoring_revisions WHERE change_note LIKE 'E2E-bad%'")"
@@ -146,7 +163,7 @@ check "invalid proposal not stored" "0" "$(sql "SELECT COUNT(*) FROM scoring_rev
 curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/admin2-page.html" "$BASE/scoring-tables"
 contains "second admin sees the pending change" "$OUT/admin2-page.html" "E2E-B change sum65 percentile to 88"
 curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/approve.html" -L \
-  -d "action=approve&id=$REV1" "$BASE/scoring-tables"
+  -d "action=approve&id=$REV1&csrf_token=$ATOK2" "$BASE/scoring-tables"
 contains "approval confirmed" "$OUT/approve.html" "approved — it is now used by every scoring run"
 check "revision approved" "approved" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV1")"
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active.html" "$BASE/scoring-tables"
@@ -167,11 +184,12 @@ curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/submit2.html" -L \
   --data-urlencode "kind=interpretation" \
   --data-urlencode "note=E2E-I" \
   --data-urlencode "payload=$BANDS" \
+  --data-urlencode "csrf_token=$ATOK" \
   "$BASE/scoring-tables"
 REV2=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'E2E-I%' AND status='pending'")
 [ -n "$REV2" ] && pass "interpretation proposal pending (#$REV2)" || fail "interpretation proposal missing"
 curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/reject.html" -L \
-  -d "action=reject&id=$REV2" "$BASE/scoring-tables"
+  -d "action=reject&id=$REV2&csrf_token=$ATOK2" "$BASE/scoring-tables"
 contains "rejection confirmed" "$OUT/reject.html" "rejected"
 check "revision status rejected" "rejected" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV2")"
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active2.html" "$BASE/scoring-tables"
@@ -184,12 +202,13 @@ curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/submit3.html" -L \
   --data-urlencode "kind=table_b" \
   --data-urlencode "note=E2E-C change sum65 to 77" \
   --data-urlencode "payload=$C2" \
+  --data-urlencode "csrf_token=$ATOK" \
   "$BASE/scoring-tables"
 contains "pending proposal shows the version it would become" "$OUT/submit3.html" "would become <b>v1.2</b>"
 REVC=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'E2E-C%' AND status='pending'")
 [ -n "$REVC" ] && pass "second proposal pending (#$REVC)" || fail "second proposal missing"
 curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/approve-c.html" -L \
-  -d "action=approve&id=$REVC" "$BASE/scoring-tables"
+  -d "action=approve&id=$REVC&csrf_token=$ATOK2" "$BASE/scoring-tables"
 contains "second proposal approved" "$OUT/approve-c.html" "approved — it is now used by every scoring run"
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active3.html" "$BASE/scoring-tables"
 contains "second approved version is v1.2" "$OUT/active3.html" "v1.2"
@@ -200,7 +219,7 @@ contains "newer version live (AI 105)" "$OUT/report3.html" '<span class="plate-n
 
 # go back: restore revision REV1 (the v1.1 values 88/111)
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/restore.html" -L \
-  -d "action=restore&id=$REV1" "$BASE/scoring-tables"
+  -d "action=restore&id=$REV1&csrf_token=$ATOK" "$BASE/scoring-tables"
 contains "restore creates a new pending revision" "$OUT/restore.html" "created from #$REV1"
 REV4=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'Restored from #${REV1}%' AND status='pending'")
 [ -n "$REV4" ] && pass "restored copy pending (#$REV4)" || fail "restored copy missing"
@@ -209,10 +228,10 @@ check "restored payload is identical to the old version" \
   "$(sql "SELECT payload FROM scoring_revisions WHERE id=$REV4")"
 # the restore still needs the second admin
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/restore-own.html" -L \
-  -d "action=approve&id=$REV4" "$BASE/scoring-tables"
+  -d "action=approve&id=$REV4&csrf_token=$ATOK" "$BASE/scoring-tables"
 contains "restored copy cannot be self-approved" "$OUT/restore-own.html" "your own change"
 curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/approve-restore.html" -L \
-  -d "action=approve&id=$REV4" "$BASE/scoring-tables"
+  -d "action=approve&id=$REV4&csrf_token=$ATOK2" "$BASE/scoring-tables"
 contains "restored version approved" "$OUT/approve-restore.html" "approved — it is now used by every scoring run"
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active4.html" "$BASE/scoring-tables"
 contains "restored version becomes v1.3" "$OUT/active4.html" "v1.3"
@@ -274,9 +293,75 @@ contains "records list shows the new assessment" "$OUT/records.html" "E2E-After"
 curl -s -c "$JAR/therapist.jar" -b "$JAR/therapist.jar" -o "$OUT/record.html" "$BASE/assessment?id=$(sql "SELECT id FROM assessments WHERE individual_name='E2E-After'")"
 contains "stored record shows revised percentile 88" "$OUT/record.html" '<span class="pfig-n">88</span>'
 
+# ---------------------------------------------------------------- P0 security: cookies, CSRF, HTTPS, lockout
+echo "== security: P0 hardening =="
+
+curl -s -D "$OUT/hdr-login.txt" -o /dev/null "$BASE/login"
+grep -i '^set-cookie:' "$OUT/hdr-login.txt" > "$OUT/setcookie.txt" || true
+contains "session cookie is HttpOnly" "$OUT/setcookie.txt" "HttpOnly"
+contains "session cookie sets SameSite=Lax" "$OUT/setcookie.txt" "SameSite=Lax"
+
+curl -s -o "$OUT/loginpage-sec.html" "$BASE/login"
+contains "login page carries the CSRF meta token" "$OUT/loginpage-sec.html" 'name="csrf-token" content='
+contains "login form carries the CSRF hidden field" "$OUT/loginpage-sec.html" 'name="csrf_token" value='
+
+CJAR="$JAR/csrf.jar"; rm -f "$CJAR"
+curl -s -c "$CJAR" -o /dev/null "$BASE/login"
+CODE=$(curl -s -b "$CJAR" -o "$OUT/csrf403.html" -w "%{http_code}" -d "username=admin&password=ChangeMe2026!" "$BASE/login")
+check "login POST without CSRF token gets 403" "403" "$CODE"
+contains "403 message names the problem" "$OUT/csrf403.html" "session token is missing or expired"
+
+CODE=$(curl -s -b "$JAR/admin.jar" -o "$OUT/csrf403b.html" -w "%{http_code}" -d "action=approve&id=1" "$BASE/scoring-tables")
+check "scoring POST without CSRF token gets 403" "403" "$CODE"
+contains "scoring 403 is the CSRF guard" "$OUT/csrf403b.html" "session token is missing or expired"
+
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: example.org" "$BASE/")
+LOC=$(curl -s -o /dev/null -w "%{redirect_url}" -H "Host: example.org" "$BASE/")
+check "public host is redirected with 301" "301" "$CODE"
+check "redirect target forces HTTPS" "https://example.org/" "$LOC"
+
+# brute-force lockout on an isolated probe account
+if [ "$(sql "SELECT COUNT(*) FROM users WHERE username='lockprobe_e2e'")" = "0" ]; then
+  curl -s -b "$JAR/admin.jar" -o /dev/null \
+    -d "new_username=lockprobe_e2e&new_password=LockProbePass1&confirm=LockProbePass1&full_name=Lock+Probe&role=therapist&csrf_token=$ATOK" \
+    "$BASE/register"
+  check "lockout probe account created" "1" "$(sql "SELECT COUNT(*) FROM users WHERE username='lockprobe_e2e'")"
+fi
+PJAR="$JAR/lockprobe.jar"; rm -f "$PJAR"
+PTOK=$(curl -s -c "$PJAR" "$BASE/login" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+for i in 1 2 3 4 5; do
+  curl -s -o /dev/null -b "$PJAR" -c "$PJAR" -d "username=lockprobe_e2e&password=Wrong$i&csrf_token=$PTOK" "$BASE/login"
+done
+check "5 failed attempts recorded" "5" "$(sql "SELECT COUNT(*) FROM login_attempts WHERE username='lockprobe_e2e'")"
+curl -s -b "$PJAR" -o "$OUT/lock6.html" -d "username=lockprobe_e2e&password=Wrong6&csrf_token=$PTOK" "$BASE/login"
+contains "account locked after 5 failures" "$OUT/lock6.html" "Too many failed sign-in attempts"
+curl -s -b "$PJAR" -o "$OUT/lock-correct.html" -d "username=lockprobe_e2e&password=LockProbePass1&csrf_token=$PTOK" "$BASE/login"
+contains "correct password refused while locked" "$OUT/lock-correct.html" "Too many failed sign-in attempts"
+sql "DELETE FROM login_attempts WHERE username='lockprobe_e2e'"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$PJAR" -c "$PJAR" -d "username=lockprobe_e2e&password=LockProbePass1&csrf_token=$PTOK" "$BASE/login")
+check "login works again once attempts are cleared" "302" "$CODE"
+
+if [ "$(sql "SELECT COUNT(*) FROM activity_logs WHERE action='login_blocked'")" -ge 1 ]; then
+  pass "lockout events are recorded in the activity trail"
+else
+  fail "lockout events are recorded in the activity trail"
+fi
+if [ "$(sql "SELECT COUNT(*) FROM activity_logs WHERE action='csrf_blocked'")" -ge 1 ]; then
+  pass "CSRF rejections are recorded in the activity trail"
+else
+  fail "CSRF rejections are recorded in the activity trail"
+fi
+
 # ---------------------------------------------------------------- cleanup
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
+LID=$(sql "SELECT id FROM users WHERE username='lockprobe_e2e'")
+if [ -n "$LID" ]; then
+  sql "DELETE FROM user_sessions WHERE user_id=$LID"
+fi
+sql "DELETE FROM users WHERE username='lockprobe_e2e'";
+sql "DELETE FROM login_attempts";
+sql "DELETE FROM activity_logs WHERE details LIKE '%lockprobe_e2e%' OR action IN ('csrf_blocked','login_blocked')";
 sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('admin2e2e','testere2e'))";
 sql "DELETE FROM activity_logs WHERE username IN ('admin2e2e','testere2e')";
 sql "DELETE FROM users WHERE username IN ('admin2e2e','testere2e')";

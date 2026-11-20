@@ -53,7 +53,7 @@ function gars_current_route(): string
 function gars_track_page(?string $action = 'page_visit', ?string $details = null): void
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
-        @session_start();
+        gars_session_start();
     }
     $user = gars_current_user();
     if (!$user) {
@@ -99,7 +99,7 @@ function gars_track_page(?string $action = 'page_visit', ?string $details = null
 function gars_session_token(): string
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
-        @session_start();
+        gars_session_start();
     }
     if (empty($_SESSION['gars_token'])) {
         $_SESSION['gars_token'] = bin2hex(random_bytes(24));

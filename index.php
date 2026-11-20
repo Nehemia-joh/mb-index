@@ -18,6 +18,7 @@ gars_track_page('page_visit', 'Opened the assessment form');
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0B5CAF">
+    <meta name="csrf-token" content="<?php echo htmlspecialchars(gars_csrf_token(), ENT_QUOTES); ?>">
     <?php gars_favicon_links(); ?>
     <title>Therapist form</title>
     <?php gars_styles(); ?>

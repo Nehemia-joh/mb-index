@@ -41,6 +41,7 @@ $formErrors = [];
 $editorPrefill = null; // kind => payload, kept when validation fails (no redirect)
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    gars_csrf_check();
     $action = $_POST['action'] ?? '';
 
     if ($action === 'submit') {
@@ -308,11 +309,13 @@ gars_header('Scoring tables', 'scoring-tables');
                 <td class="muted"><?php echo gars_e($rev['change_note'] ?? '—'); ?></td>
                 <td style="text-align:right; white-space:nowrap;">
                     <form method="post" style="display:inline;">
+                        <?php echo gars_csrf_field(); ?>
                         <input type="hidden" name="action" value="approve">
                         <input type="hidden" name="id" value="<?php echo (int) $rev['id']; ?>">
                         <button class="btn" type="submit" <?php echo $own ? 'disabled title="Your own change — another admin must approve it"' : ''; ?>>Approve</button>
                     </form>
                     <form method="post" style="display:inline; margin-left:6px;">
+                        <?php echo gars_csrf_field(); ?>
                         <input type="hidden" name="action" value="reject">
                         <input type="hidden" name="id" value="<?php echo (int) $rev['id']; ?>">
                         <button class="btn red" type="submit" <?php echo $own ? 'disabled title="Your own change — another admin must reject it"' : ''; ?>>Reject</button>
@@ -335,6 +338,7 @@ gars_header('Scoring tables', 'scoring-tables');
     <details class="scoring-details" <?php echo ($editorPrefill && isset($editorPrefill[$kind])) || (!$editorPrefill && $kind === 'table_a') ? 'open' : ''; ?>>
         <summary><strong><?php echo gars_e($label); ?></strong></summary>
         <form method="post" class="scoring-form" data-kind="<?php echo gars_e($kind); ?>" style="margin-top:14px;">
+            <?php echo gars_csrf_field(); ?>
             <input type="hidden" name="action" value="submit">
             <input type="hidden" name="kind" value="<?php echo gars_e($kind); ?>">
             <input type="hidden" name="payload" value="">
@@ -450,6 +454,7 @@ gars_header('Scoring tables', 'scoring-tables');
                     <span class="muted" style="font-size:.85rem;">decide above</span>
                 <?php else: ?>
                     <form method="post" style="display:inline;" onsubmit="return confirm('Restore revision #<?php echo (int) $rev['id']; ?> as a NEW pending revision? It only becomes active after another admin approves it.');">
+                        <?php echo gars_csrf_field(); ?>
                         <input type="hidden" name="action" value="restore">
                         <input type="hidden" name="id" value="<?php echo (int) $rev['id']; ?>">
                         <button class="btn ghost" type="submit">Restore</button>
