@@ -284,5 +284,114 @@ ok(gars_current_user() === null, 'idle session is treated as logged out');
 ok(!isset($_SESSION['gars_user']), 'idle session state cleared');
 ok(SESSION_TIMEOUT > 0, 'idle timeout enabled by default');
 
+echo "== RBAC: tables, effective roles, safeguards ==\n";
+gars_ensure_rbac_tables();
+foreach (['roles', 'user_roles', 'role_groups', 'role_group_roles', 'user_role_groups'] as $t) {
+    ok((bool) $db->query("SHOW TABLES LIKE '$t'")->fetchColumn(), "$t table exists");
+}
+$sysRoles = $db->query('SELECT name FROM roles WHERE is_system = 1 ORDER BY name')->fetchAll(PDO::FETCH_COLUMN);
+ok($sysRoles === ['admin', 'it_admin', 'therapist'], 'three system roles seeded');
+
+$db->exec('DELETE FROM users WHERE username IN ("rbac_a", "rbac_b", "rbac_it2")');
+$uidA = gars_create_user('rbac_a', 'RbacPass!2026', 'therapist', 'RBAC A');
+$uidB = gars_create_user('rbac_b', 'RbacPass!2026', 'admin', 'RBAC B');
+$userA = ['id' => $uidA, 'role' => 'therapist'];
+ok(gars_user_role_names($userA) === ['therapist'], 'base role is in the effective set');
+
+$rid = gars_create_role('e2e_unit_role', 'Unit Reviewer', 'unit test role');
+ok($rid > 0, 'custom role created');
+gars_grant_role($uidA, $rid, $uidB);
+ok(in_array('e2e_unit_role', gars_user_role_names($userA), true), 'direct grant appears in effective roles');
+
+$gid = gars_create_group('Unit Panel', 'unit group');
+ok($gid > 0, 'role group created');
+$adminRid = (int) gars_role_id_by_name('admin');
+gars_set_group_roles($gid, [$adminRid, $rid]);
+gars_assign_group($uidA, $gid, $uidB);
+$eff = gars_user_role_names($userA);
+ok(in_array('admin', $eff, true), 'group role appears in effective roles');
+ok(in_array('therapist', $eff, true), 'base role survives alongside group roles');
+ok(count(gars_group_roles($gid)) === 2, 'group carries both roles');
+ok(gars_group_members($gid) === 1, 'group member counted');
+
+// a direct-only role disappears on revoke while group-carried roles remain
+$rid2 = gars_create_role('e2e_unit_solo', 'Unit Solo', 'direct-only role');
+gars_grant_role($uidA, $rid2, $uidB);
+ok(in_array('e2e_unit_solo', gars_user_role_names($userA), true), 'second direct grant appears');
+gars_revoke_role($uidA, $rid2);
+$eff = gars_user_role_names($userA);
+ok(!in_array('e2e_unit_solo', $eff, true) && in_array('admin', $eff, true) && in_array('e2e_unit_role', $eff, true),
+    'revoke removes the direct grant only; group roles remain');
+gars_revoke_role($uidA, $rid);
+gars_unassign_group($uidA, $gid);
+$eff = gars_user_role_names($userA);
+ok(!in_array('admin', $eff, true) && !in_array('e2e_unit_role', $eff, true),
+    'unassigning the group removes its roles');
+ok(in_array('therapist', $eff, true), 'base role survives group removal');
+
+try {
+    gars_delete_role($adminRid);
+    ok(false, 'built-in roles cannot be deleted');
+} catch (RuntimeException $e) {
+    ok(str_contains($e->getMessage(), 'Built-in'), 'built-in roles cannot be deleted');
+}
+try {
+    gars_create_role('admin', 'Dup');
+    ok(false, 'duplicate role name refused');
+} catch (RuntimeException $e) {
+    ok(str_contains($e->getMessage(), 'built-in'), 'built-in role names cannot be reused');
+}
+$usage = gars_role_usage($adminRid);
+ok($usage['direct'] >= 0 && $usage['via_groups'] >= 0, 'role usage counters computed');
+
+// safeguards: self-protection and the last active IT administrator
+$adminRow = $db->query("SELECT * FROM users WHERE username = 'admin'")->fetch();
+$actorB = ['id' => $uidB, 'role' => 'admin'];
+try {
+    gars_assert_can_change_target($adminRow, $adminRow, false, 'therapist');
+    ok(false, 'self base-role change refused');
+} catch (RuntimeException $e) {
+    ok(str_contains($e->getMessage(), 'own base role'), 'self base-role change refused');
+}
+try {
+    gars_assert_can_change_target($adminRow, $adminRow, true, null);
+    ok(false, 'self deactivation refused');
+} catch (RuntimeException $e) {
+    ok(str_contains($e->getMessage(), 'own account'), 'self deactivation refused');
+}
+$uidIt2 = gars_create_user('rbac_it2', 'RbacPass!2026', 'it_admin', 'RBAC IT 2');
+try {
+    gars_assert_can_change_target($actorB, $adminRow, false, 'admin');
+    ok(true, 'demotion allowed while another IT administrator exists');
+} catch (RuntimeException $e) {
+    ok(false, 'demotion allowed while another IT administrator exists');
+}
+$db->exec('DELETE FROM users WHERE username = "rbac_it2"');
+try {
+    gars_assert_can_change_target($actorB, $adminRow, false, 'admin');
+    ok(false, 'last IT administrator cannot be demoted');
+} catch (RuntimeException $e) {
+    ok(str_contains($e->getMessage(), 'last active IT administrator'), 'last IT administrator cannot be demoted');
+}
+
+// source-level: guards and pages use the effective set
+$editSrc = file_get_contents(__DIR__ . '/../edit.php');
+$assessSrc = file_get_contents(__DIR__ . '/../assessment.php');
+$itSrc = file_get_contents(__DIR__ . '/../itadmin.php');
+ok(str_contains($uiSrc, 'gars_user_role_names($user)'), 'nav links are built from effective roles');
+ok(str_contains($editSrc, "gars_has_role('admin', 'it_admin')"), 'record ownership uses effective admin check');
+ok(str_contains($assessSrc, "gars_has_role('admin', 'it_admin')"), 'assessment view uses effective admin check');
+ok(str_contains($authSrc, 'gars_has_role(...$roles)'), 'require_role delegates to effective roles');
+ok(str_contains($itSrc, "'roles'    => ['it_admin']") && str_contains($itSrc, "'users'    => ['admin', 'it_admin']"),
+    'console tabs carry their own role lists');
+ok(str_contains($itSrc, 'set_group_roles') && str_contains($itSrc, 'update_user') && str_contains($itSrc, 'gars_assert_can_change_target'),
+    'console implements group-role and user-management actions with safeguards');
+
+// cleanup
+$db->exec('DELETE FROM users WHERE username IN ("rbac_a", "rbac_b", "rbac_it2")');
+$db->exec("DELETE FROM role_groups WHERE name = 'Unit Panel'");
+$db->exec("DELETE FROM roles WHERE name IN ('e2e_unit_role', 'e2e_unit_solo')");
+gars_rbac_flush();
+
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

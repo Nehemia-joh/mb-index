@@ -19,7 +19,7 @@ $stmt = $db->prepare('SELECT a.*, u.username AS creator FROM assessments a LEFT 
 $stmt->execute([$id]);
 $rec = $stmt->fetch();
 
-if (!$rec || ($user['role'] === 'therapist' && (int) $rec['created_by'] !== (int) $user['id'])) {
+if (!$rec || (!gars_has_role('admin', 'it_admin') && (int) $rec['created_by'] !== (int) $user['id'])) {
     http_response_code(404);
     gars_header('Record not found', 'assessment', false);
     echo '<div class="section"><h2>Record not found</h2><p class="muted">Record #' . $id . ' does not exist, or it was saved by another therapist.</p><p style="margin-top:14px;"><a class="btn" href="' . gars_url('assessments') . '">Back to records</a></p></div>';

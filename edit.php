@@ -27,7 +27,7 @@ $stmt = $db->prepare('SELECT * FROM assessments WHERE id = ?');
 $stmt->execute([$id]);
 $rec = $stmt->fetch();
 
-if (!$rec || ($currentUser['role'] === 'therapist' && (int) $rec['created_by'] !== (int) $currentUser['id'])) {
+if (!$rec || (!gars_has_role('admin', 'it_admin') && (int) $rec['created_by'] !== (int) $currentUser['id'])) {
     http_response_code(404);
     gars_header('Record not found', 'assessment', false);
     echo '<div class="section"><h2>Record not found</h2>'

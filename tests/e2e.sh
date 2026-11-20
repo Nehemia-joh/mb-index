@@ -356,10 +356,11 @@ fi
 # IT admin panel: lockout limits (raise, prove the effect, reset)
 CODE=$(curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin.html" -w "%{http_code}" "$BASE/itadmin")
 check "it admin opens /itadmin" "200" "$CODE"
-contains "lockout card is on the console" "$OUT/itadmin.html" "Login lockout"
-contains "default account limit shown" "$OUT/itadmin.html" 'name="login_user_limit" value="5"'
-contains "default IP limit shown" "$OUT/itadmin.html" 'name="login_ip_limit" value="60"'
-contains "default lock duration shown" "$OUT/itadmin.html" 'name="login_lock_minutes" value="30"'
+curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin-settings.html" "$BASE/itadmin?tab=settings"
+contains "lockout card is on the settings tab" "$OUT/itadmin-settings.html" "Login lockout"
+contains "default account limit shown" "$OUT/itadmin-settings.html" 'name="login_user_limit" value="5"'
+contains "default IP limit shown" "$OUT/itadmin-settings.html" 'name="login_ip_limit" value="60"'
+contains "default lock duration shown" "$OUT/itadmin-settings.html" 'name="login_lock_minutes" value="30"'
 
 curl -s -b "$JAR/admin.jar" -o "$OUT/itadmin-saved.html" -L \
   -d "action=save_lockout&login_user_limit=7&login_ip_limit=90&login_lock_minutes=45&csrf_token=$ATOK" \
@@ -418,6 +419,175 @@ check "legacy-hash user logs in normally" "302" "$CODE"
 check "hash upgraded to cost 12 on login" '$2y$12$' \
   "$(sql "SELECT LEFT(password_hash,7) FROM users WHERE username='lockprobe_e2e'")"
 
+# ---------------------------------------------------------------- RBAC: tabs, roles, groups, user management
+echo "== RBAC: tabs, roles, groups, user management =="
+
+# start clean (defensive against a crashed earlier run)
+sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('e2e_boss','e2e_lifecycle'))"
+sql "DELETE FROM users WHERE username IN ('e2e_boss','e2e_lifecycle')"
+sql "DELETE FROM login_attempts WHERE username IN ('e2e_boss','e2e_lifecycle')"
+sql "DELETE FROM user_role_groups WHERE user_id = (SELECT id FROM users WHERE username='testere2e')"
+sql "DELETE FROM user_roles WHERE user_id = (SELECT id FROM users WHERE username='testere2e')"
+
+# every tab is open to the IT administrator
+for T in users roles logs settings; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/admin.jar" "$BASE/itadmin?tab=$T")
+  check "it admin opens the $T tab" "200" "$CODE"
+done
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/therapist.jar" "$BASE/itadmin?tab=users")
+check "therapist blocked from user management" "403" "$CODE"
+
+# a plain administrator lands on Users and cannot reach the it_admin-only tabs
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  -d "new_username=e2e_boss&new_password=BossPass!2026&confirm=BossPass!2026&full_name=E2E+Boss&role=admin&csrf_token=$ATOK" \
+  "$BASE/register"
+check "base-admin probe created" "1" "$(sql "SELECT COUNT(*) FROM users WHERE username='e2e_boss'")"
+BJAR="$JAR/boss.jar"
+login "$BJAR" e2e_boss 'BossPass!2026'
+curl -s -b "$BJAR" -o "$OUT/boss-itadmin.html" "$BASE/itadmin"
+contains "administrator lands on the Users tab" "$OUT/boss-itadmin.html" 'name="new_username"'
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$BJAR" "$BASE/itadmin?tab=settings")
+check "administrator blocked from Settings" "403" "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$BJAR" "$BASE/itadmin?tab=roles")
+check "administrator blocked from Roles" "403" "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$BJAR" "$BASE/itadmin?tab=logs")
+check "administrator can open Activity logs" "200" "$CODE"
+
+# custom role + role group from the Roles & groups tab
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=create_role" \
+  --data-urlencode "name=e2e_reviewer" \
+  --data-urlencode "label=E2E Reviewer" \
+  --data-urlencode "description=Created by the e2e suite" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=roles"
+check "custom role created" "1" "$(sql "SELECT COUNT(*) FROM roles WHERE name='e2e_reviewer'")"
+
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=create_group" \
+  --data-urlencode "name=E2E Panel" \
+  --data-urlencode "description=Group role bundle" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=roles"
+check "role group created" "1" "$(sql "SELECT COUNT(*) FROM role_groups WHERE name='E2E Panel'")"
+
+curl -s -b "$JAR/admin.jar" -o "$OUT/roles-tab.html" "$BASE/itadmin?tab=roles"
+contains "roles tab lists the custom role" "$OUT/roles-tab.html" "E2E Reviewer"
+contains "roles tab lists the group" "$OUT/roles-tab.html" "E2E Panel"
+
+GID=$(sql "SELECT id FROM role_groups WHERE name='E2E Panel'")
+RID=$(sql "SELECT id FROM roles WHERE name='e2e_reviewer'")
+ARID=$(sql "SELECT id FROM roles WHERE name='admin'")
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=set_group_roles" \
+  --data-urlencode "group_id=$GID" \
+  --data-urlencode "roles[]=$RID" \
+  --data-urlencode "roles[]=$ARID" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=roles"
+check "group carries both roles" "2" "$(sql "SELECT COUNT(*) FROM role_group_roles WHERE group_id=$GID")"
+
+# assign the group to the therapist — the group's admin role unlocks admin pages
+TID=$(sql "SELECT id FROM users WHERE username='testere2e'")
+TFULL=$(sql "SELECT full_name FROM users WHERE username='testere2e'")
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$TID" \
+  --data-urlencode "full_name=$TFULL" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "is_active=1" \
+  --data-urlencode "groups[]=$GID" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=users"
+check "group assigned to the therapist" "1" "$(sql "SELECT COUNT(*) FROM user_role_groups WHERE user_id=$TID AND group_id=$GID")"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/therapist.jar" "$BASE/scoring-tables")
+check "group-granted admin role unlocks /scoring-tables for the therapist" "200" "$CODE"
+
+# remove the group → the access goes with it
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$TID" \
+  --data-urlencode "full_name=$TFULL" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "is_active=1" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=users"
+check "group unassigned" "0" "$(sql "SELECT COUNT(*) FROM user_role_groups WHERE user_id=$TID")"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/therapist.jar" "$BASE/scoring-tables")
+check "access removed with the group" "403" "$CODE"
+
+# full lifecycle: create → password reset → sign-in → deactivate → sign-in refused
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  -d "action=create_user&new_username=e2e_lifecycle&new_password=LifePass!2026&confirm=LifePass!2026&full_name=E2E+Lifecycle&email=&role=therapist&csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=users"
+check "user created from the Users tab" "1" "$(sql "SELECT COUNT(*) FROM users WHERE username='e2e_lifecycle'")"
+
+LID=$(sql "SELECT id FROM users WHERE username='e2e_lifecycle'")
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$LID" \
+  --data-urlencode "full_name=E2E Lifecycle" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "is_active=1" \
+  --data-urlencode "new_password=NewLifePass1" \
+  --data-urlencode "confirm=NewLifePass1" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=users"
+LJAR="$JAR/lifecycle.jar"
+login "$LJAR" e2e_lifecycle 'NewLifePass1'
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$LJAR" "$BASE/")
+check "password reset from the Users tab works" "200" "$CODE"
+
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$LID" \
+  --data-urlencode "full_name=E2E Lifecycle" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "csrf_token=$ATOK" \
+  "$BASE/itadmin?tab=users"
+check "account disabled" "0" "$(sql "SELECT is_active FROM users WHERE username='e2e_lifecycle'")"
+LJAR2="$JAR/lifecycle2.jar"; rm -f "$LJAR2"
+LTOK=$(curl -s -c "$LJAR2" "$BASE/login" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+curl -s -b "$LJAR2" -c "$LJAR2" -o "$OUT/lifecycle-denied.html" \
+  --data-urlencode "username=e2e_lifecycle" \
+  --data-urlencode "password=NewLifePass1" \
+  --data-urlencode "csrf_token=$LTOK" \
+  "$BASE/login"
+contains "disabled account cannot sign in" "$OUT/lifecycle-denied.html" "do not match"
+
+# a plain administrator cannot change their own base role
+BID=$(sql "SELECT id FROM users WHERE username='e2e_boss'")
+BTOK=$(token "$BJAR" "$BASE/itadmin")
+curl -s -b "$BJAR" -o "$OUT/boss-self.html" -L \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$BID" \
+  --data-urlencode "full_name=E2E Boss" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "is_active=1" \
+  --data-urlencode "csrf_token=$BTOK" \
+  "$BASE/itadmin?tab=users"
+contains "self role change refused" "$OUT/boss-self.html" "own base role"
+check "boss base role unchanged" "admin" "$(sql "SELECT role FROM users WHERE username='e2e_boss'")"
+
+# management POSTs still require the CSRF token
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -b "$JAR/admin.jar" \
+  -d "action=create_role&name=e2e_noct&label=NoToken" \
+  "$BASE/itadmin?tab=roles")
+check "management POST without CSRF token gets 403" "403" "$CODE"
+
+# RBAC cleanup
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=delete_group" --data-urlencode "group_id=$GID" \
+  --data-urlencode "csrf_token=$ATOK" "$BASE/itadmin?tab=roles"
+check "group deleted" "0" "$(sql "SELECT COUNT(*) FROM role_groups WHERE name='E2E Panel'")"
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=delete_role" --data-urlencode "role_id=$RID" \
+  --data-urlencode "csrf_token=$ATOK" "$BASE/itadmin?tab=roles"
+check "custom role deleted" "0" "$(sql "SELECT COUNT(*) FROM roles WHERE name='e2e_reviewer'")"
+sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('e2e_boss','e2e_lifecycle'))"
+sql "DELETE FROM users WHERE username IN ('e2e_boss','e2e_lifecycle')"
+sql "DELETE FROM login_attempts WHERE username IN ('e2e_boss','e2e_lifecycle')"
+
 # ---------------------------------------------------------------- cleanup
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
@@ -429,6 +599,7 @@ sql "DELETE FROM users WHERE username='lockprobe_e2e'";
 sql "DELETE FROM login_attempts";
 sql "DELETE FROM app_settings";
 sql "DELETE FROM activity_logs WHERE details LIKE '%lockprobe_e2e%' OR action IN ('csrf_blocked','login_blocked')";
+sql "DELETE FROM activity_logs WHERE username IN ('e2e_boss','e2e_lifecycle') OR details LIKE '%e2e_boss%' OR details LIKE '%e2e_lifecycle%' OR details LIKE '%E2E Panel%' OR details LIKE '%e2e_reviewer%' OR action IN ('role_create','role_update','role_delete','group_create','group_update','group_delete','group_roles','user_update')";
 sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('admin2e2e','testere2e'))";
 sql "DELETE FROM activity_logs WHERE username IN ('admin2e2e','testere2e')";
 sql "DELETE FROM users WHERE username IN ('admin2e2e','testere2e')";

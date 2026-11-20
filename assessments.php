@@ -16,7 +16,7 @@ gars_track_page('page_visit', 'Assessment records');
 
 $db = gars_db();
 
-if (in_array($user['role'], ['admin', 'it_admin'], true)) {
+if (gars_has_role('admin', 'it_admin')) {
     $rows = $db->query(
         'SELECT a.*, u.username AS creator FROM assessments a
          LEFT JOIN users u ON u.id = a.created_by
@@ -36,7 +36,7 @@ gars_header('Records', 'assessments');
 ?>
 <div class="page-head">
     <h1>Assessment records</h1>
-    <p class="sub"><?php echo count($rows); ?> record<?php echo count($rows) === 1 ? '' : 's'; ?>, <?php echo $user['role'] === 'therapist' ? 'all saved by you' : 'saved by every account in the system'; ?>. Open one to see the full scoring report.</p>
+    <p class="sub"><?php echo count($rows); ?> record<?php echo count($rows) === 1 ? '' : 's'; ?>, <?php echo gars_has_role('admin', 'it_admin') ? 'saved by every account in the system' : 'all saved by you'; ?>. Open one to see the full scoring report.</p>
 </div>
 
 <?php if ($rows): ?>

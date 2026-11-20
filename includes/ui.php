@@ -67,11 +67,19 @@ function gars_nav_links(?array $user): array
         return ['login' => 'Sign in'];
     }
     $links['assessments'] = 'Records';
-    if ($user['role'] === 'therapist') {
+    $roles = gars_user_role_names($user);
+    if (in_array('therapist', $roles, true)) {
         $links['therapist'] = 'My dashboard';
-    } else {
-        $links[$user['role'] === 'it_admin' ? 'itadmin' : 'admin'] =
-            $user['role'] === 'it_admin' ? 'IT admin' : 'Admin';
+    }
+    if (in_array('it_admin', $roles, true)) {
+        $links['itadmin'] = 'IT admin';
+    } elseif (in_array('admin', $roles, true)) {
+        $links['admin'] = 'Admin';
+    }
+    if (in_array('admin', $roles, true) || in_array('it_admin', $roles, true)) {
+        if (!in_array('it_admin', $roles, true)) {
+            $links['itadmin?tab=users'] = 'Users';
+        }
         $links['sessions'] = 'Sessions';
         $links['activity'] = 'Activity';
         $links['scoring-tables'] = 'Scoring tables';

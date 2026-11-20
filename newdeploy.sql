@@ -49,3 +49,61 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_by     INT UNSIGNED DEFAULT NULL,
     CONSTRAINT fk_settings_editor FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Role-based access control: roles, direct grants and group roles.
+-- Effective roles = users.role (base) + user_roles + roles from assigned
+-- groups. The app also creates these tables on demand (IF NOT EXISTS).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS roles (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(50)  NOT NULL UNIQUE,
+    label       VARCHAR(100) NOT NULL,
+    description VARCHAR(255) DEFAULT NULL,
+    is_system   TINYINT(1)   NOT NULL DEFAULT 0,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id    INT UNSIGNED NOT NULL,
+    role_id    INT UNSIGNED NOT NULL,
+    granted_by INT UNSIGNED DEFAULT NULL,
+    granted_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, role_id),
+    CONSTRAINT fk_ur_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ur_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ur_granter FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS role_groups (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(80)  NOT NULL UNIQUE,
+    description VARCHAR(255) DEFAULT NULL,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS role_group_roles (
+    group_id INT UNSIGNED NOT NULL,
+    role_id  INT UNSIGNED NOT NULL,
+    PRIMARY KEY (group_id, role_id),
+    CONSTRAINT fk_grg_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_grg_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_role_groups (
+    user_id     INT UNSIGNED NOT NULL,
+    group_id    INT UNSIGNED NOT NULL,
+    assigned_by INT UNSIGNED DEFAULT NULL,
+    assigned_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, group_id),
+    CONSTRAINT fk_urg_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_urg_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_urg_assigner FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- the three built-in roles (idempotent; the app seeds them on demand too)
+INSERT IGNORE INTO roles (name, label, description, is_system) VALUES
+    ('therapist', 'Therapist', 'Create and edit own assessment records', 1),
+    ('admin', 'Administrator', 'Records, scoring tables and user management', 1),
+    ('it_admin', 'IT System Administrator', 'Everything an administrator can do, plus roles, groups, settings and the console', 1);

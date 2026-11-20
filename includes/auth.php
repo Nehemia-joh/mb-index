@@ -1,12 +1,14 @@
 <?php
 /**
  * includes/auth.php — user accounts, password login and role guards.
- * Roles: therapist | admin | it_admin
+ * Base roles: therapist | admin | it_admin (users.role column).
+ * Effective access also includes direct grants and group roles — see rbac.php.
  */
 if (!defined('GARS_APP_ROOT')) {
     require_once __DIR__ . '/../config.php';
 }
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/rbac.php';
 
 function gars_roles(): array
 {
@@ -124,7 +126,16 @@ function gars_is_logged_in(): bool
 function gars_has_role(string ...$roles): bool
 {
     $user = gars_current_user();
-    return $user !== null && in_array($user['role'], $roles, true);
+    if ($user === null) {
+        return false;
+    }
+    $mine = gars_user_role_names($user);
+    foreach ($roles as $role) {
+        if (in_array($role, $mine, true)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /** Block a page unless logged in (redirects to /login). */
@@ -141,11 +152,11 @@ function gars_require_login(): array
     return $user;
 }
 
-/** Block a page unless the user has one of the given roles. */
+/** Block a page unless the user's effective roles include one of the given. */
 function gars_require_role(array $roles): array
 {
     $user = gars_require_login();
-    if (!in_array($user['role'], $roles, true)) {
+    if (!gars_has_role(...$roles)) {
         http_response_code(403);
         exit('403 — You do not have permission to view that page.');
     }
@@ -162,10 +173,11 @@ function gars_home_route(?array $user = null): string
     $user  = $user ?: gars_current_user();
     $route = 'index';
     if ($user) {
-        $route = match ($user['role']) {
-            'it_admin' => 'itadmin',
-            'admin'    => 'admin',
-            default    => 'therapist',
+        $mine = gars_user_role_names($user);
+        $route = match (true) {
+            in_array('it_admin', $mine, true) => 'itadmin',
+            in_array('admin', $mine, true)    => 'admin',
+            default                           => 'therapist',
         };
     }
     return $route;
