@@ -121,6 +121,14 @@ gars_reset_scoring_cache();
 ok(gars_get_composite(65, true) === ['70', 108], 'built-in table restored after the revision is removed');
 ok(gars_get_composite(60, true) === ['50', 100], 'built-in sum60 lookup restored');
 
+echo "== Scoring-table page: versions & restore ==\n";
+$st = file_get_contents(__DIR__ . '/../scoring_tables.php');
+ok(str_contains($st, "action === 'restore'"), 'restore action present on the page');
+ok(str_contains($st, 'Restored from'), 'restore note format present');
+ok(str_contains($st, 'gars_version_of'), 'version label helper present');
+ok(str_contains($st, "'v1.'"), 'v1.x version numbering present');
+ok(str_contains($st, "status IN ('approved','superseded')"), 'version numbering counts approved revisions');
+
 echo "== Schema ==\n";
 ok((bool) $db->query("SHOW TABLES LIKE 'scoring_revisions'")->fetchColumn(), 'scoring_revisions table exists');
 

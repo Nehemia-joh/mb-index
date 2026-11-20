@@ -3,7 +3,8 @@
 # Run from the project root:  bash tests/e2e.sh
 # Covers: wording/title/age JS, therapist form scoring, scoring-table
 # edit + four-eyes approval, global effect of an approved revision,
-# validation failures, role guards.
+# validation failures, role guards, version labels (v1.0, v1.1, …)
+# and restoring an older version from the history.
 set -u
 
 BASE=http://127.0.0.1:8123
@@ -27,7 +28,7 @@ not_contains() { # not_contains <description> <file> <needle>
 sql() { mysql -u fallback_change_me -pfallback_change_me maishabora_gars3 -N -B -e "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------- clean slate
-sql "DELETE FROM scoring_revisions WHERE change_note LIKE 'E2E%'";
+sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
 
 # ---------------------------------------------------------------- start server
@@ -89,6 +90,7 @@ CODE=$(curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/adm-scoring.html
 check "admin can open /scoring-tables" "200" "$CODE"
 contains "admin page lists Table A editor" "$OUT/adm-scoring.html" "Table A — raw subscale score"
 contains "admin page shows built-in baseline" "$OUT/adm-scoring.html" "Built-in published table"
+contains "built-in baseline is version v1.0" "$OUT/adm-scoring.html" "v1.0"
 contains "admin nav has Scoring tables link" "$OUT/adm-scoring.html" "Scoring tables"
 
 # ---------------------------------------------------------------- form wording
@@ -148,6 +150,8 @@ contains "approval confirmed" "$OUT/approve.html" "approved — it is now used b
 check "revision approved" "approved" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV1")"
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active.html" "$BASE/scoring-tables"
 contains "Table B now shows an active revision" "$OUT/active.html" "Revision #$REV1"
+contains "first approved revision is version v1.1" "$OUT/active.html" "v1.1"
+contains "history offers Restore for decided revisions" "$OUT/active.html" ">Restore</button>"
 
 # ---------------------------------------------------------------- global effect
 assess_post "$JAR/therapist.jar" "E2E-After" > "$OUT/report2.html"
@@ -172,6 +176,52 @@ check "revision status rejected" "rejected" "$(sql "SELECT status FROM scoring_r
 curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active2.html" "$BASE/scoring-tables"
 contains "interpretation still built-in after rejection" "$OUT/active2.html" "Built-in published table"
 
+# ---------------------------------------------------------------- versions + restore an older version
+C2='[["77",null,[65,65],105]]'
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/submit3.html" -L \
+  --data-urlencode "action=submit" \
+  --data-urlencode "kind=table_b" \
+  --data-urlencode "note=E2E-C change sum65 to 77" \
+  --data-urlencode "payload=$C2" \
+  "$BASE/scoring-tables"
+contains "pending proposal shows the version it would become" "$OUT/submit3.html" "would become <b>v1.2</b>"
+REVC=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'E2E-C%' AND status='pending'")
+[ -n "$REVC" ] && pass "second proposal pending (#$REVC)" || fail "second proposal missing"
+curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/approve-c.html" -L \
+  -d "action=approve&id=$REVC" "$BASE/scoring-tables"
+contains "second proposal approved" "$OUT/approve-c.html" "approved — it is now used by every scoring run"
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active3.html" "$BASE/scoring-tables"
+contains "second approved version is v1.2" "$OUT/active3.html" "v1.2"
+contains "old version still listed as v1.1 in history" "$OUT/active3.html" "v1.1"
+assess_post "$JAR/therapist.jar" "E2E-Mid" > "$OUT/report3.html"
+contains "newer version live (77)" "$OUT/report3.html" '<span class="pfig-n">77</span>'
+contains "newer version live (AI 105)" "$OUT/report3.html" '<span class="plate-n">105</span>'
+
+# go back: restore revision REV1 (the v1.1 values 88/111)
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/restore.html" -L \
+  -d "action=restore&id=$REV1" "$BASE/scoring-tables"
+contains "restore creates a new pending revision" "$OUT/restore.html" "created from #$REV1"
+REV4=$(sql "SELECT id FROM scoring_revisions WHERE change_note LIKE 'Restored from #${REV1}%' AND status='pending'")
+[ -n "$REV4" ] && pass "restored copy pending (#$REV4)" || fail "restored copy missing"
+check "restored payload is identical to the old version" \
+  "$(sql "SELECT payload FROM scoring_revisions WHERE id=$REV1")" \
+  "$(sql "SELECT payload FROM scoring_revisions WHERE id=$REV4")"
+# the restore still needs the second admin
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/restore-own.html" -L \
+  -d "action=approve&id=$REV4" "$BASE/scoring-tables"
+contains "restored copy cannot be self-approved" "$OUT/restore-own.html" "your own change"
+curl -s -c "$JAR/admin2.jar" -b "$JAR/admin2.jar" -o "$OUT/approve-restore.html" -L \
+  -d "action=approve&id=$REV4" "$BASE/scoring-tables"
+contains "restored version approved" "$OUT/approve-restore.html" "approved — it is now used by every scoring run"
+curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o "$OUT/active4.html" "$BASE/scoring-tables"
+contains "restored version becomes v1.3" "$OUT/active4.html" "v1.3"
+contains "superseded v1.2 still visible in history" "$OUT/active4.html" "v1.2"
+assess_post "$JAR/therapist.jar" "E2E-Restore" > "$OUT/report4.html"
+contains "scoring back to old version percentile 88" "$OUT/report4.html" '<span class="pfig-n">88</span>'
+contains "scoring back to old version AI 111" "$OUT/report4.html" '<span class="plate-n">111</span>'
+check "C2 (v1.2) superseded" "superseded" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REVC")"
+check "REV1 (v1.1) superseded" "superseded" "$(sql "SELECT status FROM scoring_revisions WHERE id=$REV1")"
+
 # ---------------------------------------------------------------- history & records
 curl -s -c "$JAR/therapist.jar" -b "$JAR/therapist.jar" -o "$OUT/records.html" "$BASE/records"
 contains "records list shows the new assessment" "$OUT/records.html" "E2E-After"
@@ -179,7 +229,7 @@ curl -s -c "$JAR/therapist.jar" -b "$JAR/therapist.jar" -o "$OUT/record.html" "$
 contains "stored record shows revised percentile 88" "$OUT/record.html" '<span class="pfig-n">88</span>'
 
 # ---------------------------------------------------------------- cleanup
-sql "DELETE FROM scoring_revisions WHERE change_note LIKE 'E2E%'";
+sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
 sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE username IN ('admin2e2e','testere2e'))";
 sql "DELETE FROM activity_logs WHERE username IN ('admin2e2e','testere2e')";

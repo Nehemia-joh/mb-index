@@ -1,0 +1,207 @@
+===============================================================================
+ MAISHA BORA — GUIDE TO EDITING THE SCORING TABLES
+ (Table A, Table B and the Interpretation Bands)
+===============================================================================
+
+1. WHERE TO GO
+-------------------------------------------------------------------------------
+ Open the page:  /scoring-tables
+
+   • In the browser address bar:   your-domain.com/scoring-tables
+   • Or click "Scoring tables" in the top navigation bar.
+
+   Who can open it: only ADMIN and IT ADMIN accounts.
+   (A therapist gets a 403 — you do not have permission page.)
+
+   Important: before editing on the LIVE/production server, make sure
+   newdeploy.sql has been imported once in phpMyAdmin (it creates the
+   scoring_revisions table this feature needs). If that table is missing,
+   the app keeps using the built-in tables and your edits cannot be saved.
+
+
+2. THE PAGE LAYOUT
+-------------------------------------------------------------------------------
+   Currently active      — shows which version of each table is live right now,
+                           with its version number: Built-in published table
+                           (v1.0) or an approved Revision # (v1.1, v1.2, …).
+   Waiting for approval  — changes proposed by others that you can Approve or
+                           Reject (your own proposals appear here too, but the
+                           buttons are disabled for them). Each row also shows
+                           which version it WOULD become if approved.
+   Propose a change      — the three editors: Table A, Table B, Interpretation.
+   Revision history      — the last 20 proposals with version number, status,
+                           who proposed/decided — and a Restore button on every
+                           decided version (see section 5).
+
+
+3. EDITING A TABLE
+-------------------------------------------------------------------------------
+ Step 1: Under "Propose a change", click the section you want to edit:
+           • Table A — raw subscale score → scaled score & percentile rank
+           • Table B — sum of scaled scores → percentile rank & Autism Index
+           • Interpretation bands — Autism Index → probability & severity
+
+ Step 2: The grid opens pre-filled with the CURRENTLY ACTIVE version of that
+         table (built-in, or the last approved revision). Change only the
+         cells you need:
+
+           • Number cells (Scaled score, Autism Index, upper bound): type a
+             number.
+           • Text cells (Percentile rank, Probability, Severity,
+             Descriptor): type the label exactly as it should appear on the
+             report.
+           • Range cells (Table A raw ranges, Table B sum ranges): written as
+                 low-high          for example:  0-3   26-27   60-60
+             Leave a range EMPTY if no score should map to that row.
+             Low must be smaller than or equal to high.
+
+         Table A row meaning:
+             Scaled | Percentile | RB | SI | SC | ER | CS | MS
+             (RB..MS are the raw-score ranges of the six subscales;
+              max raw = RB 39, SI 42, SC 27, ER 24, CS 21, MS 21)
+
+         Table B row meaning:
+             Percentile | 4-score range | 6-score range | Autism Index
+             (4-score = mute/4 subscales, 6-score = verbal/all 6 subscales;
+              at least one of the two ranges must be filled)
+
+         Interpretation row meaning:
+             Autism Index up to | Probability | Severity | Descriptor
+             The LAST row must have an empty upper bound (open-ended) so every
+             Autism Index value is covered, and upper bounds must increase
+             from top to bottom.
+
+ Step 3: Buttons in the editor:
+           • "Add row"        — appends an empty row at the bottom.
+           • "×" (Remove)     — deletes that row (at least one row must stay).
+           • "What changed and why" — a short note for the approver
+             (example: "Table B percentile for sum 70 corrected to 34").
+           • "Submit for approval" — saves your version as a PENDING revision.
+
+ Step 4: Fix any red error list that appears — nothing is saved until the
+         whole table passes validation (ranges valid, values inside limits,
+         interpretation bands increasing with an open-ended last row).
+
+
+4. THE APPROVAL RULE (FOUR-EYES / SECOND ADMIN)
+-------------------------------------------------------------------------------
+   • Submitting does NOT change scoring. The table you submitted stays
+     PENDING under "Waiting for approval".
+   • An editor can NEVER approve their own change — the Approve/Reject
+     buttons are disabled on your own proposals.
+   • ANOTHER admin (or the IT admin) must open /scoring-tables and click
+       Approve  → the revision goes live immediately for every new scoring
+                  run (and for edit/recalculate of records).
+       Reject   → the proposal is discarded; the old table stays active.
+   • Only ONE revision per table can be active: approving a new one
+     automatically supersedes the previous active/pending versions of that
+     same table.
+   • The record you are viewing on screen keeps the scores it was saved
+     with; only NEW scoring runs use the approved table.
+
+
+5. VERSIONS (v1.0, v1.1, …) AND GOING BACK TO AN OLDER VERSION
+-------------------------------------------------------------------------------
+   How versions are numbered (each table is versioned on its own — Table A,
+   Table B and the interpretation bands have independent numbers):
+       v1.0   — the built-in published table (shipped with the app).
+       v1.1   — the first revision ever approved for that table.
+       v1.2   — the second one, then v1.3, v1.4, … and so on.
+
+   Where you see the number:
+       • "Currently active" — next to the live source
+         (Built-in published table [v1.0]  /  Revision #12 [v1.3]).
+       • Revision history — the "Version" column of every decided revision.
+       • Waiting for approval — "would become v1.x" on each pending row.
+
+   TO GO BACK to an older version:
+    Step 1: In "Revision history", find the version you want (number, note,
+            who proposed/decided it tells you which one it is).
+    Step 2: Click its Restore button and confirm.
+            → This does NOT change scoring yet. It creates a NEW pending
+              revision containing that old version's exact table, noted as
+              "Restored from #<revision-id>: …".
+    Step 3: A SECOND admin approves it (the same four-eyes rule as any other
+            change — you cannot approve your own restore).
+            → It becomes the newest version (e.g. v1.4) and every new
+              scoring run uses it immediately.
+
+   Notes:
+       • Nothing is ever deleted. The version you restored from — and every
+         other version — stays in the history (shown as superseded).
+       • Saved records are untouched: already-saved assessments keep the
+         scores they were saved with; only NEW scoring runs use the restore.
+       • A change that is still "pending" has no Restore button — approve or
+         reject it instead.
+
+6. AFTER APPROVING — CHECK IT WORKS
+-------------------------------------------------------------------------------
+   1. "Currently active" now shows the Revision # and its new version
+      number (v1.x) for that table.
+   2. Run a test assessment (New assessment → fill the form → Score and
+      save) and confirm the changed values appear on the report.
+   3. The change is recorded in the activity trail (actions:
+      scoring_submit / scoring_approve / scoring_reject / scoring_restore)
+      and in the Revision history on /scoring-tables.
+
+
+7. GOOD PRACTICES
+-------------------------------------------------------------------------------
+   • Change one table at a time and write a clear note.
+   • Keep a backup of the old values — the Revision history shows who
+     proposed what, but it does not show a cell-by-cell diff.
+   • Percentile labels are text (e.g. "84", "<1", ">99") — keep the same
+     style as the existing rows so reports stay consistent.
+   • Table A and Table B are the published GARS-3 conversion tables; edit
+     them only when you have verified the correct value against the manual,
+     and have a second admin ready to approve.
+   • Never leave gaps you do not intend: a sum/raw score with no matching
+     row will show "n/a" for the composite.
+
+
+8. TROUBLESHOOTING
+-------------------------------------------------------------------------------
+   "The change was NOT saved" + error list
+        → Fix the listed rows and resubmit. Common causes: range written as
+          "5-2" (high must be >= low), range above the subscale maximum,
+          missing percentile, interpretation last row without an empty bound.
+
+   Approve button is greyed out
+        → It is your own proposal. Ask the other admin to approve it.
+
+   Restored a version but the scoring did not change
+        → A restore only CREATES a pending copy. The second admin must
+          Approve it first (section 5), then new scoring runs use it.
+
+   I restored the wrong version
+        → Restore the version you actually want the same way. Each restore
+          just adds another pending proposal; nothing is ever lost.
+
+   No Restore button on a history row
+        → The row is still pending (decide it above) — Restore only exists
+          for decided versions (approved, superseded or rejected).
+
+   Page says Built-in published table after approving
+        → Refresh the page; the active source updates immediately after
+          approval. If it never changes, the approval failed — check the
+          Revision history status column.
+
+   403 on /scoring-tables
+        → You are logged in as a therapist. Use an admin / IT admin account.
+
+   Submit gives "The table could not be read"
+        → The page was probably modified; reload /scoring-tables and retry.
+
+   On production: table missing errors / edits never persist
+        → Import newdeploy.sql once in phpMyAdmin, then reload.
+
+===============================================================================
+ Quick reference:
+   Page            /scoring-tables
+   Roles           admin, it_admin
+   Approval        your own change needs a SECOND admin
+   Versions        built-in = v1.0; each approval = v1.1, v1.2, v1.3, …
+   Restore         Revision history → Restore → second admin approves again
+   Goes live       immediately after that approval, for every new scoring run
+   SQL for prod    newdeploy.sql  (phpMyAdmin → Import)
+===============================================================================

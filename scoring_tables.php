@@ -8,6 +8,11 @@
  * takes effect globally only after ANOTHER admin / IT admin approves it —
  * an editor can never approve their own change. The newest approved revision
  * of each table is what every scoring run uses (see includes/scoring.php).
+ *
+ * Versions: the built-in published table is v1.0; every approved revision
+ * takes the next number in approval order (v1.1, v1.2, …) and any past
+ * version can be brought back with Restore (as a new pending revision that
+ * again needs a second admin's approval).
  */
 
 require_once __DIR__ . '/config.php';
@@ -122,6 +127,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             gars_flash("Revision #$revId ($label) rejected.", 'success');
         }
         gars_redirect(gars_url('scoring-tables'));
+    } elseif ($action === 'restore') {
+        $revId = (int) ($_POST['id'] ?? 0);
+        $stmt = $db->prepare('SELECT * FROM scoring_revisions WHERE id = ?');
+        $stmt->execute([$revId]);
+        $rev = $stmt->fetch();
+        if (!$rev) {
+            gars_flash('Revision not found.', 'error');
+        } elseif ($rev['status'] === 'pending') {
+            gars_flash('That change is already waiting for approval — approve or reject it instead.', 'error');
+        } else {
+            $note = 'Restored from #' . $revId;
+            if ($rev['change_note'] !== null && $rev['change_note'] !== '') {
+                $note .= ': ' . $rev['change_note'];
+            }
+            $db->prepare(
+                'INSERT INTO scoring_revisions (kind, payload, change_note, status, created_by)
+                 VALUES (?, ?, ?, "pending", ?)'
+            )->execute([$rev['kind'], $rev['payload'], $note, $user['id']]);
+            $newId = (int) $db->lastInsertId();
+            $label = $kindShort[$rev['kind']] ?? $rev['kind'];
+            gars_log_activity('scoring_restore', 'scoring-tables', "Restored revision #$revId ($label) as pending revision #$newId");
+            gars_flash("Revision #$newId created from #$revId — it applies only after another admin approves it.", 'success');
+        }
+        gars_redirect(gars_url('scoring-tables'));
     }
 
     // validation-failure fall-through: render the page with $formErrors below
@@ -129,10 +158,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /* ---------------------------------------------------------------- GET data */
 
+// Version numbering: built-in published table = v1.0; every approved revision
+// gets the next number in approval order per table (v1.1, v1.2, …).
 $activeInfo = [];
 foreach (array_keys($kindLabels) as $kind) {
     $stmt = $db->prepare(
-        "SELECT r.*, u.username FROM scoring_revisions r
+        "SELECT r.*, u.username,
+           (SELECT COUNT(*) FROM scoring_revisions r2
+             WHERE r2.kind = r.kind AND r2.status IN ('approved','superseded') AND r2.id <= r.id) AS approval_seq
+         FROM scoring_revisions r
          LEFT JOIN users u ON u.id = r.decided_by
          WHERE r.kind = ? AND r.status = 'approved' ORDER BY r.id DESC LIMIT 1"
     );
@@ -142,17 +176,31 @@ foreach (array_keys($kindLabels) as $kind) {
 }
 
 $pending = $db->query(
-    "SELECT r.*, u.username AS author FROM scoring_revisions r
+    "SELECT r.*, u.username AS author,
+       (SELECT COUNT(*) FROM scoring_revisions r2
+         WHERE r2.kind = r.kind AND r2.status IN ('approved','superseded')) AS approved_count
+     FROM scoring_revisions r
      LEFT JOIN users u ON u.id = r.created_by
      WHERE r.status = 'pending' ORDER BY r.id ASC"
 )->fetchAll();
 
 $recent = $db->query(
-    "SELECT r.*, ua.username AS author, ud.username AS decider FROM scoring_revisions r
+    "SELECT r.*, ua.username AS author, ud.username AS decider,
+       (SELECT COUNT(*) FROM scoring_revisions r2
+         WHERE r2.kind = r.kind AND r2.status IN ('approved','superseded') AND r2.id <= r.id) AS approval_seq
+     FROM scoring_revisions r
      LEFT JOIN users ua ON ua.id = r.created_by
      LEFT JOIN users ud ON ud.id = r.decided_by
      ORDER BY r.id DESC LIMIT 20"
 )->fetchAll();
+
+/** Version label of a decided revision: v1.1, v1.2, … (pending/rejected = —). */
+function gars_version_of(array $rev): string
+{
+    return in_array($rev['status'], ['approved', 'superseded'], true)
+        ? 'v1.' . (int) ($rev['approval_seq'] ?? 0)
+        : '—';
+}
 
 /** Rows used to prefill an editor: the submitted payload, else the active table. */
 function gars_editor_rows(string $kind, ?array $prefill): array
@@ -219,8 +267,8 @@ gars_header('Scoring tables', 'scoring-tables');
             <tr>
                 <td><strong><?php echo gars_e($label); ?></strong></td>
                 <td><?php echo $rev
-                    ? 'Revision #' . (int) $rev['id']
-                    : '<span class="badge warn">Built-in published table</span>'; ?></td>
+                    ? 'Revision #' . (int) $rev['id'] . ' <span class="badge on">v1.' . (int) $rev['approval_seq'] . '</span>'
+                    : '<span class="badge warn">Built-in published table</span> <span class="badge on">v1.0</span>'; ?></td>
                 <td class="n"><?php echo count(gars_active_revision($kind) ?? match ($kind) {
                     'table_a' => GARS_TABLE_A, 'table_b' => GARS_TABLE_B,
                     'interpretation' => gars_default_interpretation_bands(), default => [],
@@ -252,7 +300,8 @@ gars_header('Scoring tables', 'scoring-tables');
             <tr>
                 <td class="n">#<?php echo (int) $rev['id']; ?></td>
                 <td><strong><?php echo gars_e($kindShort[$rev['kind']] ?? $rev['kind']); ?></strong>
-                    <small class="muted"> <?php echo $rowCount; ?> row<?php echo $rowCount === 1 ? '' : 's'; ?></small></td>
+                    <small class="muted"> <?php echo $rowCount; ?> row<?php echo $rowCount === 1 ? '' : 's'; ?>
+                    — would become <b>v1.<?php echo 1 + (int) $rev['approved_count']; ?></b></small></td>
                 <td><?php echo gars_e($rev['author'] ?? ('user #' . $rev['created_by'])); ?>
                     <?php if ($own): ?><span class="badge warn">you</span><?php endif; ?></td>
                 <td><?php echo gars_e($rev['created_at']); ?></td>
@@ -384,17 +433,29 @@ gars_header('Scoring tables', 'scoring-tables');
     <?php else: ?>
     <div class="tablewrap">
     <table class="data">
-        <thead><tr><th class="n">#</th><th>Table</th><th>Status</th><th>Proposed by</th><th>Decided by</th><th>Proposed</th><th>Note</th></tr></thead>
+        <thead><tr><th class="n">#</th><th>Table</th><th>Version</th><th>Status</th><th>Proposed by</th><th>Decided by</th><th>Proposed</th><th>Note</th><th></th></tr></thead>
         <tbody>
         <?php foreach ($recent as $rev): ?>
             <tr>
                 <td class="n">#<?php echo (int) $rev['id']; ?></td>
                 <td><?php echo gars_e($kindShort[$rev['kind']] ?? $rev['kind']); ?></td>
+                <td><span class="badge <?php echo $rev['status'] === 'approved' ? 'on' : ''; ?>"><?php echo gars_e(gars_version_of($rev)); ?></span></td>
                 <td><span class="badge <?php echo $rev['status'] === 'approved' ? 'on' : ($rev['status'] === 'rejected' ? 'off' : 'warn'); ?>"><?php echo gars_e($rev['status']); ?></span></td>
                 <td><?php echo gars_e($rev['author'] ?? ('user #' . $rev['created_by'])); ?></td>
                 <td><?php echo $rev['decided_by'] ? gars_e($rev['decider'] ?? ('user #' . $rev['decided_by'])) : '—'; ?></td>
                 <td><?php echo gars_e($rev['created_at']); ?></td>
                 <td class="muted"><?php echo gars_e($rev['change_note'] ?? '—'); ?></td>
+                <td style="text-align:right; white-space:nowrap;">
+                <?php if ($rev['status'] === 'pending'): ?>
+                    <span class="muted" style="font-size:.85rem;">decide above</span>
+                <?php else: ?>
+                    <form method="post" style="display:inline;" onsubmit="return confirm('Restore revision #<?php echo (int) $rev['id']; ?> as a NEW pending revision? It only becomes active after another admin approves it.');">
+                        <input type="hidden" name="action" value="restore">
+                        <input type="hidden" name="id" value="<?php echo (int) $rev['id']; ?>">
+                        <button class="btn ghost" type="submit">Restore</button>
+                    </form>
+                <?php endif; ?>
+                </td>
             </tr>
         <?php endforeach; ?>
         </tbody>
