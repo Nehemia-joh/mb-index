@@ -16,6 +16,20 @@ class _LoginScreenState extends State<LoginScreen> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   bool _showServer = false;
+  bool _urlSeeded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // show the address restored from storage (or the last one the user typed)
+    // instead of the emulator default — the login screen only mounts after
+    // Session.restore() has finished.
+    if (!_urlSeeded) {
+      _urlSeeded = true;
+      final saved = context.read<Session>().client.baseUrl.trim();
+      if (saved.isNotEmpty) _url.text = saved;
+    }
+  }
 
   @override
   void dispose() {
@@ -35,6 +49,8 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     // point the client at this server before attempting login
     session.client.baseUrl = url;
+    await session.store.saveBaseUrl(url); // survives a failed attempt
+    if (!mounted) return;
     final ok =
         await session.login(url, _username.text.trim(), _password.text);
     if (!mounted) return;
@@ -117,6 +133,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         decoration: const InputDecoration(
                           labelText: 'API base URL',
                           hintText: 'http://10.0.2.2:8123/api/v1',
+                          helperText:
+                              'Emulator uses 10.0.2.2; a physical phone needs '
+                              "the server's LAN IP (e.g. 192.168.0.168).",
+                          helperMaxLines: 3,
                         ),
                       ),
                     ),

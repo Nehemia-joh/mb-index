@@ -133,11 +133,31 @@ void main() {
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.byType(TextField), findsWidgets);
   });
+
+  testWidgets('sign-in screen offers the previously used server address',
+      (tester) async {
+    const savedUrl = 'http://192.168.0.168:8123/api/v1';
+    final session = Session(
+      client: ApiClient(baseUrl: ApiClient.defaultBaseUrl),
+      store: _FakeTokenStore(url: savedUrl), // stored, but signed out
+    );
+    await tester.pumpWidget(MaishaBoraApp(session: session));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // the emulator default must not overwrite what the user already typed
+    expect(find.text(savedUrl), findsWidgets);
+    expect(find.text(ApiClient.defaultBaseUrl), findsNothing);
+  });
 }
 
 class _FakeTokenStore implements TokenStore {
+  _FakeTokenStore({this.url});
+
+  final String? url;
+
   @override
-  Future<String?> readBaseUrl() async => null;
+  Future<String?> readBaseUrl() async => url;
 
   @override
   Future<String?> readToken() async => null;
@@ -145,6 +165,9 @@ class _FakeTokenStore implements TokenStore {
   @override
   Future<void> saveSession(
           {required String token, required String baseUrl}) async {}
+
+  @override
+  Future<void> saveBaseUrl(String baseUrl) async {}
 
   @override
   Future<void> clear() async {}

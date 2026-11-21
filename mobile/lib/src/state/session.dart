@@ -25,6 +25,16 @@ class TokenStore {
 
   Future<String?> readBaseUrl() => _storage.read(key: _kUrl);
 
+  /// Keep the server address the user typed, even when sign-in itself fails
+  /// (wrong password, server down) — otherwise they retype it every attempt.
+  Future<void> saveBaseUrl(String baseUrl) async {
+    try {
+      await _storage.write(key: _kUrl, value: baseUrl);
+    } catch (_) {
+      // storage unavailable (tests) — address just won't persist
+    }
+  }
+
   Future<void> clear() async {
     try {
       await _storage.delete(key: _kToken);
@@ -54,12 +64,15 @@ class Session extends ChangeNotifier {
     try {
       final savedUrl = await store.readBaseUrl();
       final savedToken = await store.readToken();
-      if (savedUrl == null || savedToken == null || savedToken.isEmpty) {
+      // the address sticks even without a token (e.g. signed out / expired)
+      if (savedUrl != null && savedUrl.isNotEmpty) {
+        client.baseUrl = savedUrl;
+      }
+      if (savedToken == null || savedToken.isEmpty) {
         restored = true;
         notifyListeners();
         return;
       }
-      client.baseUrl = savedUrl;
       client.token = savedToken;
       user = await client.me();
     } on ApiException catch (e) {
