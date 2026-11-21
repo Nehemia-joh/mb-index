@@ -47,6 +47,15 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {});
       return;
     }
+    // catch address typos (e.g. a truncated 192.168.0.168) before they
+    // surface as a generic "cannot reach the server"
+    if (!ApiClient.looksLikeServerUrl(url)) {
+      session.error =
+          'That server address is not valid — expected http://<ip>:<port>/api/v1 '
+          '(e.g. http://192.168.0.168:8123/api/v1).';
+      setState(() {});
+      return;
+    }
     // point the client at this server before attempting login
     session.client.baseUrl = url;
     await session.store.saveBaseUrl(url); // survives a failed attempt
@@ -130,6 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: TextField(
                         controller: _url,
                         keyboardType: TextInputType.url,
+                        onChanged: (_) => setState(() {}), // live preview
                         decoration: const InputDecoration(
                           labelText: 'API base URL',
                           hintText: 'http://10.0.2.2:8123/api/v1',

@@ -25,8 +25,38 @@ class ApiClient {
   static const _device = 'android-flutter';
 
   Uri _uri(String path) {
-    final base = baseUrl.trimRight().replaceAll(RegExp(r'/+$'), '');
+    final base = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (!looksLikeServerUrl('$base$path')) {
+      throw ApiException(
+          0,
+          'bad_url',
+          'The server address is not valid — expected '
+          'http://<server>:<port>/api/v1.');
+    }
     return Uri.parse('$base$path');
+  }
+
+  /// Cheap client-side check that [url] points at a plausible server.
+  ///
+  /// Catches the common field typo of a truncated IP (e.g. `192.168.:8123`):
+  /// an all-numeric host must be a complete dotted quad, and any other host
+  /// must not end in a dot. No network access — this is a sanity check, not
+  /// a reachability test.
+  static bool looksLikeServerUrl(String url) {
+    final parsed = Uri.tryParse(url.trim());
+    if (parsed == null ||
+        !parsed.hasScheme ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https') ||
+        parsed.host.isEmpty) {
+      return false;
+    }
+    final host = parsed.host;
+    if (RegExp(r'^[\d.]+$').hasMatch(host)) {
+      final parts = host.split('.');
+      return parts.length == 4 &&
+          parts.every((p) => p.isNotEmpty && p.length <= 3 && int.parse(p) <= 255);
+    }
+    return !host.endsWith('.');
   }
 
   Map<String, String> get _headers => {
@@ -40,11 +70,15 @@ class ApiClient {
     String path, {
     Object? body,
   }) async {
-    final request = http.Request(method, _uri(path));
+    final target = _uri(path);
+    final request = http.Request(method, target);
     request.headers.addAll(_headers);
     if (body != null) {
       request.body = jsonEncode(body);
     }
+
+    // named for error messages: "cannot reach" is useless without where to
+    final host = '${target.host}:${target.port}';
 
     final http.Response response;
     try {
@@ -56,10 +90,16 @@ class ApiClient {
       throw ApiException(0, 'timeout', 'The server did not respond in time.');
     } on SocketException {
       throw ApiException(
-          0, 'network', 'Cannot reach the server. Check the address and your connection.');
+          0,
+          'network',
+          'Cannot reach the server at $host. Check the address '
+          'and your connection.');
     } on http.ClientException {
       throw ApiException(
-          0, 'network', 'Cannot reach the server. Check the address and your connection.');
+          0,
+          'network',
+          'Cannot reach the server at $host. Check the address '
+          'and your connection.');
     }
 
     Map<String, dynamic> json;

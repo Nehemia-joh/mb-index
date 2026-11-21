@@ -119,6 +119,42 @@ void main() {
     });
   });
 
+  group('server address validation', () {
+    test('accepts complete addresses', () {
+      expect(ApiClient.looksLikeServerUrl('http://192.168.0.168:8123/api/v1'),
+          isTrue);
+      expect(ApiClient.looksLikeServerUrl('http://10.0.2.2:8123/api/v1'), isTrue);
+      expect(ApiClient.looksLikeServerUrl('https://gars.example.org/api/v1'),
+          isTrue);
+      expect(ApiClient.looksLikeServerUrl('http://localhost:8123/api/v1'),
+          isTrue);
+    });
+
+    test('rejects the truncated-IP typo seen on device', () {
+      // what was actually typed during field testing: 192.168.:8123
+      expect(ApiClient.looksLikeServerUrl('http://192.168.:8123/api/v1'),
+          isFalse);
+      expect(ApiClient.looksLikeServerUrl('http://192.168.0.999:8123/api/v1'),
+          isFalse);
+      expect(ApiClient.looksLikeServerUrl('192.168.0.168:8123'), isFalse);
+      expect(ApiClient.looksLikeServerUrl(''), isFalse);
+      expect(ApiClient.looksLikeServerUrl('not a url'), isFalse);
+    });
+
+    test('a rejected address fails before any request is sent', () async {
+      final client = ApiClient(baseUrl: 'http://192.168.:8123/api/v1');
+      try {
+        await client.metaForm();
+        fail('expected an ApiException');
+      } on ApiException catch (e) {
+        expect(e.code, 'bad_url');
+        expect(e.statusCode, 0);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
   testWidgets('app opens on the sign-in screen', (tester) async {
     // fake storage: no plugin channel exists under testWidgets
     final session = Session(
