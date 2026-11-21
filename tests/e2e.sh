@@ -5,8 +5,10 @@
 # edit + four-eyes approval, global effect of an approved revision,
 # validation failures, role guards, version labels (v1.0, v1.1, …),
 # restoring an older version from the history, sessions-by-user page,
-# the filterable activity log (403 for therapists) and the P0 security
-# hardening (CSRF tokens, cookie flags, HTTPS redirect, login lockout).
+# the filterable activity log (403 for therapists), the P0/P1 security
+# hardening (CSRF tokens, cookie flags, HTTPS redirect, login lockout,
+# security headers), the RBAC console (roles, groups, user management)
+# and the mobile JSON API (/api/v1: bearer tokens, scoring, records).
 set -u
 
 BASE=http://127.0.0.1:8123
@@ -588,9 +590,178 @@ sql "DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE user
 sql "DELETE FROM users WHERE username IN ('e2e_boss','e2e_lifecycle')"
 sql "DELETE FROM login_attempts WHERE username IN ('e2e_boss','e2e_lifecycle')"
 
+# ---------------------------------------------------------------- API (mobile JSON)
+echo "== API: JSON endpoints for the mobile app =="
+jget() { # jget <file> <dot.path> — read a value out of a JSON file
+  php -r '$j=json_decode(file_get_contents($argv[1]),true); $v=$j;
+    foreach(explode(".",$argv[2]) as $k){ if(!is_array($v)||!array_key_exists($k,$v)){$v=null;break;} $v=$v[$k];}
+    echo is_scalar($v)?(string)$v:json_encode($v);' "$1" "$2"
+}
+
+curl -s -o "$OUT/api-discovery.json" "$BASE/api/v1"
+contains "API discovery lists the login endpoint" "$OUT/api-discovery.json" "auth/login"
+
+CODE=$(curl -s -o "$OUT/api-me-notoken.json" -w "%{http_code}" "$BASE/api/v1/auth/me")
+check "API request without a token gets 401" "401" "$CODE"
+contains "missing-token error code" "$OUT/api-me-notoken.json" "missing_token"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer deadbeef" "$BASE/api/v1/auth/me")
+check "API request with a garbage token gets 401" "401" "$CODE"
+
+CODE=$(curl -s -o "$OUT/api-login-bad.json" -w "%{http_code}" -X POST \
+  -H "Content-Type: application/json" -d '{"username":"admin2e2e","password":"nope"}' \
+  "$BASE/api/v1/auth/login")
+check "API login with wrong password gets 401" "401" "$CODE"
+contains "invalid-credentials error code" "$OUT/api-login-bad.json" "invalid_credentials"
+
+CODE=$(curl -s -o "$OUT/api-login.json" -w "%{http_code}" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin2e2e","password":"E2eAdminPass","device":"e2e-suite"}' \
+  "$BASE/api/v1/auth/login")
+check "API login succeeds" "200" "$CODE"
+ATOKEN=$(jget "$OUT/api-login.json" data.token)
+check "API login returns a 64-char token" "64" "$(printf %s "$ATOKEN" | wc -c)"
+check "API login returns the user" "admin2e2e" "$(jget "$OUT/api-login.json" data.user.username)"
+contains "effective roles included in login" "$OUT/api-login.json" "it_admin"
+
+CODE=$(curl -s -o "$OUT/api-me.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/auth/me")
+check "auth/me works with the token" "200" "$CODE"
+check "auth/me returns the user" "admin2e2e" "$(jget "$OUT/api-me.json" data.user.username)"
+if curl -s -D - -o /dev/null -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/auth/me" | grep -qi "^set-cookie:"; then
+  fail "API responses never set a session cookie"
+else
+  pass "API responses never set a session cookie"
+fi
+
+CODE=$(curl -s -o "$OUT/api-meta.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/meta/form")
+check "meta/form served" "200" "$CODE"
+check "meta/form has 6 subscales" "6" \
+  "$(php -r '$j=json_decode(file_get_contents($argv[1]),true); echo count($j["data"]["subscales"]);' "$OUT/api-meta.json")"
+check "RB subscale carries 13 items" "13" \
+  "$(php -r '$j=json_decode(file_get_contents($argv[1]),true); echo $j["data"]["subscales"][0]["item_count"];' "$OUT/api-meta.json")"
+
+# build a full rating form (every item = 2 -> sum 65 -> Autism Index 108)
+php -r '
+require "includes/rating_form.php";
+$post = [
+  "individual_name"=>"E2E-API-Record","school"=>"API School","rater_name"=>"E2E Rater",
+  "rater_title"=>"Teacher","date_of_birth"=>"2018-05-04","age"=>"7","gender"=>"Male",
+  "grade"=>"2","examiner_name"=>"E2E Examiner","examiner_title"=>"Psychologist",
+  "date_of_rating"=>"2026-11-21","rater_known_for"=>"6 months","is_mute"=>"no",
+];
+foreach (gars_subscale_defs() as $s) { foreach ($s["questions"] as $i => $q) { $post[$s["id"]."_item_".$i] = 2; } }
+file_put_contents($argv[1], json_encode($post));
+' "$OUT/api-payload.json"
+
+# the expected Autism Index comes from the scoring engine itself, so the
+# assertion holds whatever table revision is active during the run
+EXPECT_AI=$(php -r '
+require "config.php"; require "includes/db.php"; require "includes/scoring.php";
+$p = json_decode(file_get_contents($argv[1]), true);
+$c = gars_compute_scores($p, false);
+echo $c["autism_index"];' "$OUT/api-payload.json")
+CODE=$(curl -s -o "$OUT/api-create.json" -w "%{http_code}" -X POST \
+  -H "Authorization: Bearer $ATOKEN" -H "Content-Type: application/json" \
+  --data-binary @"$OUT/api-payload.json" "$BASE/api/v1/assessments")
+check "assessment created through the API" "201" "$CODE"
+check "server-side scoring matches the engine" "$EXPECT_AI" "$(jget "$OUT/api-create.json" data.report.autism_index)"
+check "all-items-2 form sums to 65 scaled" "65" "$(jget "$OUT/api-create.json" data.report.sum_scaled)"
+check "server-side scoring returns Level 3" "Level 3" "$(jget "$OUT/api-create.json" data.report.severity)"
+AID=$(jget "$OUT/api-create.json" data.id)
+
+CODE=$(curl -s -o "$OUT/api-create-missing.json" -w "%{http_code}" -X POST \
+  -H "Authorization: Bearer $ATOKEN" -H "Content-Type: application/json" -d '{}' \
+  "$BASE/api/v1/assessments")
+check "empty form rejected with 422" "422" "$CODE"
+contains "validation error code" "$OUT/api-create-missing.json" "validation"
+contains "missing field labels listed" "$OUT/api-create-missing.json" "Individual's Name"
+
+CODE=$(curl -s -o "$OUT/api-list.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments?per_page=100")
+check "records list served" "200" "$CODE"
+check "admin list scope is all" "all" "$(jget "$OUT/api-list.json" data.scope)"
+contains "list carries the new record" "$OUT/api-list.json" "E2E-API-Record"
+
+CODE=$(curl -s -o "$OUT/api-detail.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments/$AID")
+check "record detail served" "200" "$CODE"
+check "detail carries the Autism Index" "$EXPECT_AI" "$(jget "$OUT/api-detail.json" data.record.scores.autism_index)"
+
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments/$AID")
+check "DELETE on a read endpoint gets 405" "405" "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/nope")
+check "unknown API route gets 404" "404" "$CODE"
+
+# therapist: own records only
+curl -s -o "$OUT/api-tlogin.json" -X POST -H "Content-Type: application/json" \
+  -d '{"username":"testere2e","password":"E2eTherPass"}' "$BASE/api/v1/auth/login"
+TTOKEN=$(jget "$OUT/api-tlogin.json" data.token)
+cp "$OUT/api-payload.json" "$OUT/api-payload-t.json"
+php -r '$p=json_decode(file_get_contents($argv[1]),true); $p["individual_name"]="E2E-API-Ther"; file_put_contents($argv[1], json_encode($p));' "$OUT/api-payload-t.json"
+CODE=$(curl -s -o "$OUT/api-tcreate.json" -w "%{http_code}" -X POST \
+  -H "Authorization: Bearer $TTOKEN" -H "Content-Type: application/json" \
+  --data-binary @"$OUT/api-payload-t.json" "$BASE/api/v1/assessments")
+check "therapist can create a record" "201" "$CODE"
+TID=$(jget "$OUT/api-tcreate.json" data.id)
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TTOKEN" "$BASE/api/v1/assessments/$AID")
+check "therapist cannot read someone else's record" "404" "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TTOKEN" "$BASE/api/v1/assessments/$TID")
+check "therapist can read their own record" "200" "$CODE"
+curl -s -o "$OUT/api-tlist.json" -H "Authorization: Bearer $TTOKEN" "$BASE/api/v1/assessments"
+check "therapist list scope is own" "own" "$(jget "$OUT/api-tlist.json" data.scope)"
+
+# logout kills the token
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/auth/logout")
+check "API logout succeeds" "200" "$CODE"
+CODE=$(curl -s -o "$OUT/api-dead.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/auth/me")
+check "revoked token rejected" "401" "$CODE"
+contains "revoked-token error code" "$OUT/api-dead.json" "token_revoked"
+
+# lockout applies to API logins too (shared counters with the web form)
+if [ "$(sql "SELECT COUNT(*) FROM users WHERE username='apiprobe_e2e'")" = "0" ]; then
+  curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o /dev/null \
+    -d "new_username=apiprobe_e2e&new_password=ApiProbePass1&confirm=ApiProbePass1&full_name=E2E+API+Probe&role=therapist&csrf_token=$ATOK" \
+    "$BASE/register"
+fi
+N401=0; LAST=""
+for i in 1 2 3 4 5 6; do
+  C=$(curl -s -o "$OUT/api-lock.json" -w "%{http_code}" -X POST -H "Content-Type: application/json" \
+    -d "{\"username\":\"apiprobe_e2e\",\"password\":\"Wrong$i\"}" "$BASE/api/v1/auth/login")
+  [ "$C" = "401" ] && N401=$((N401+1))
+  LAST=$C
+done
+check "API login attempts 1-5 rejected with 401" "5" "$N401"
+check "API login attempt 6 is locked out" "423" "$LAST"
+contains "lockout error code" "$OUT/api-lock.json" "locked"
+
+# deactivation kills live tokens
+if [ "$(sql "SELECT COUNT(*) FROM users WHERE username='apioff_e2e'")" = "0" ]; then
+  curl -s -c "$JAR/admin.jar" -b "$JAR/admin.jar" -o /dev/null \
+    -d "new_username=apioff_e2e&new_password=ApiOffPass1&confirm=ApiOffPass1&full_name=E2E+API+Off&role=therapist&csrf_token=$ATOK" \
+    "$BASE/register"
+fi
+curl -s -o "$OUT/api-offlogin.json" -X POST -H "Content-Type: application/json" \
+  -d '{"username":"apioff_e2e","password":"ApiOffPass1"}' "$BASE/api/v1/auth/login"
+OTOKEN=$(jget "$OUT/api-offlogin.json" data.token)
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $OTOKEN" "$BASE/api/v1/auth/me")
+check "token works while the account is active" "200" "$CODE"
+OID=$(sql "SELECT id FROM users WHERE username='apioff_e2e'")
+ATOK2=$(token "$JAR/admin.jar" "$BASE/itadmin?tab=users")
+curl -s -b "$JAR/admin.jar" -o /dev/null \
+  --data-urlencode "action=update_user" \
+  --data-urlencode "user_id=$OID" \
+  --data-urlencode "full_name=E2E API Off" \
+  --data-urlencode "role=therapist" \
+  --data-urlencode "csrf_token=$ATOK2" \
+  "$BASE/itadmin?tab=users"
+CODE=$(curl -s -o "$OUT/api-offdead.json" -w "%{http_code}" -H "Authorization: Bearer $OTOKEN" "$BASE/api/v1/auth/me")
+check "deactivation kills the live token" "401" "$CODE"
+contains "deactivated token is revoked" "$OUT/api-offdead.json" "token_revoked"
+
 # ---------------------------------------------------------------- cleanup
 sql "DELETE FROM scoring_revisions WHERE change_note LIKE '%E2E%'";
 sql "DELETE FROM assessments WHERE individual_name LIKE 'E2E-%'";
+sql "DELETE FROM api_tokens";
+sql "DELETE FROM users WHERE username IN ('apiprobe_e2e','apioff_e2e')";
+sql "DELETE FROM login_attempts WHERE username IN ('apiprobe_e2e','apioff_e2e')";
+sql "DELETE FROM activity_logs WHERE page='api' OR details LIKE '%apiprobe_e2e%' OR details LIKE '%apioff_e2e%'";
 LID=$(sql "SELECT id FROM users WHERE username='lockprobe_e2e'")
 if [ -n "$LID" ]; then
   sql "DELETE FROM user_sessions WHERE user_id=$LID"

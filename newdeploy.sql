@@ -107,3 +107,23 @@ INSERT IGNORE INTO roles (name, label, description, is_system) VALUES
     ('therapist', 'Therapist', 'Create and edit own assessment records', 1),
     ('admin', 'Administrator', 'Records, scoring tables and user management', 1),
     ('it_admin', 'IT System Administrator', 'Everything an administrator can do, plus roles, groups, settings and the console', 1);
+
+-- ---------------------------------------------------------------------------
+-- Bearer tokens for the mobile JSON API (/api/v1). Only the SHA-256 hash of
+-- each token is stored; the plaintext is returned once at login. The app also
+-- creates this table on demand (IF NOT EXISTS).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id      INT UNSIGNED NOT NULL,
+    token_hash   CHAR(64)     NOT NULL,
+    device       VARCHAR(191) DEFAULT NULL,
+    created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at   DATETIME     DEFAULT NULL,
+    revoked_at   DATETIME     DEFAULT NULL,
+    UNIQUE KEY uq_token_hash (token_hash),
+    KEY idx_tok_user (user_id),
+    CONSTRAINT fk_tok_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

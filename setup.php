@@ -174,6 +174,20 @@ function gars_setup_tables(PDO $db): void
             CONSTRAINT fk_urg_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE,
             CONSTRAINT fk_urg_assigner FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        // mobile API bearer tokens (hashed at rest; see includes/api.php)
+        "CREATE TABLE IF NOT EXISTS api_tokens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            device VARCHAR(191) DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME DEFAULT NULL,
+            revoked_at DATETIME DEFAULT NULL,
+            UNIQUE KEY uq_token_hash (token_hash),
+            KEY idx_tok_user (user_id),
+            CONSTRAINT fk_tok_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($ddl as $sql) {
         $db->exec($sql);

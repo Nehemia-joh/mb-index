@@ -9,6 +9,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/tracker.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/login_core.php';
 define('GARS_ROUTE', 'login');
 
 if (gars_db_installed() === false) {
@@ -37,47 +38,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($missing) {
         $error = 'Please fill in every required field: ' . implode(', ', $missing) . '.';
     } else {
-        $lockMessage = gars_login_lock($username, $_SERVER['REMOTE_ADDR'] ?? '');
-        if ($lockMessage !== null) {
-            $error = $lockMessage;
-            gars_log_activity('login_blocked', 'login', 'Blocked sign-in attempt (lockout active) for "' . gars_lock_key($username) . '"');
+        // shared credential check (lockout, timing equalisation, cost-12
+        // rehash) — the JSON API runs the exact same path
+        $result = gars_attempt_login($username, $password, $_SERVER['REMOTE_ADDR'] ?? '');
+        if ($result['blocked']) {
+            $error = $result['error'];
+        } elseif ($result['ok']) {
+            $user = $result['user'];
+            session_regenerate_id(true);
+            gars_csrf_rotate();
+            $_SESSION['gars_user'] = [
+                'id' => (int) $user['id'],
+                'username' => $user['username'],
+                'role' => $user['role'],
+                'full_name' => $user['full_name'],
+            ];
+            $_SESSION['gars_last_seen'] = time();
+            $GLOBALS['GARS_LOG_ACTOR'] = $user; // attribute the trail row (the session cache is still cold)
+            gars_log_activity('login', 'login', 'Logged in as ' . $user['username'] . ' (' . $user['role'] . ')');
+            gars_track_page('page_visit');
+            gars_flash('Welcome back, ' . $user['full_name'] . '!');
+            gars_redirect(gars_url(gars_home_route($user)));
         } else {
-            $user = gars_find_user($username);
-            $ok = false;
-            if ($user && (int) $user['is_active']) {
-                $ok = password_verify($password, $user['password_hash']);
-                if ($ok && password_needs_rehash($user['password_hash'], PASSWORD_BCRYPT, ['cost' => 12])) {
-                    // quietly upgrade legacy hashes to the current cost policy
-                    gars_db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-                        ->execute([password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]), $user['id']]);
-                }
-            } else {
-                // timing equalisation: a missing or inactive account must cost
-                // the same as a wrong password on a real account
-                password_verify($password, GARS_TIMING_DUMMY);
-            }
-            if ($ok) {
-                // successful login — register the session in the database
-                gars_clear_login_failures($username);
-                session_regenerate_id(true);
-                gars_csrf_rotate();
-                $_SESSION['gars_user'] = [
-                    'id' => (int) $user['id'],
-                    'username' => $user['username'],
-                    'role' => $user['role'],
-                    'full_name' => $user['full_name'],
-                ];
-                $_SESSION['gars_last_seen'] = time();
-                gars_db()->prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
-                    ->execute([date('Y-m-d H:i:s'), $user['id']]);
-                gars_log_activity('login', 'login', 'Logged in as ' . $user['username'] . ' (' . $user['role'] . ')');
-                gars_track_page('page_visit');
-                gars_flash('Welcome back, ' . $user['full_name'] . '!');
-                gars_redirect(gars_url(gars_home_route($user)));
-            }
-            $error = 'That username and password do not match an account.';
-            gars_log_activity('login_failed', 'login', 'Failed login attempt for "' . $username . '"');
-            gars_record_login_failure($username, $_SERVER['REMOTE_ADDR'] ?? '');
+            $error = $result['error'];
         }
     }
 }

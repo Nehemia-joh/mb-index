@@ -10,7 +10,11 @@ declare(strict_types=1);
 require __DIR__ . '/../config.php';
 require __DIR__ . '/../includes/db.php';
 require __DIR__ . '/../includes/auth.php';
+require __DIR__ . '/../includes/tracker.php';
 require __DIR__ . '/../includes/scoring.php';
+require __DIR__ . '/../includes/login_core.php';
+require __DIR__ . '/../includes/assessment_store.php';
+require __DIR__ . '/../includes/api.php';
 
 $pass = 0;
 $fail = 0;
@@ -170,6 +174,7 @@ foreach (['login.php', 'register.php', 'edit.php', 'score.php', 'scoring_tables.
 }
 
 echo "== Security: session cookies, HTTPS, lockout ==\n";
+$loginCoreSrc = file_get_contents(__DIR__ . '/../includes/login_core.php');
 ok(str_contains($secSrc, "'httponly' => true") && str_contains($secSrc, "'samesite' => 'Lax'"),
     'session cookie is HttpOnly + SameSite=Lax');
 ok(str_contains($secSrc, 'gars_is_https()') && str_contains($secSrc, "'secure'"),
@@ -181,8 +186,9 @@ foreach (['includes/auth.php', 'includes/tracker.php', 'includes/ui.php', 'logou
     $src = file_get_contents(__DIR__ . '/../' . $sessFile);
     ok(!str_contains($src, '@session_start()'), "$sessFile starts sessions only via gars_session_start");
 }
-ok(str_contains($loginSrc, 'gars_login_lock('), 'login handler consults the lockout');
-ok(str_contains($loginSrc, 'gars_record_login_failure('), 'failed attempts are recorded');
+ok(str_contains($loginSrc, 'gars_attempt_login('), 'login handler runs the shared credential check');
+ok(str_contains($loginCoreSrc, 'gars_login_lock(') && str_contains($loginCoreSrc, 'gars_record_login_failure('),
+    'shared login core consults the lockout and records failures');
 ok(str_contains($loginSrc, 'gars_csrf_rotate()'), 'token rotates on successful login');
 
 gars_ensure_security_tables();
@@ -268,8 +274,8 @@ ok(str_contains($routeSrc, 'tests|ads') && str_contains($routeSrc, "\\.sql"),
     'dev router blocks tests/, ads/ and SQL dumps');
 ok(str_contains($routeSrc, '.env'), 'dev router blocks env files');
 ok(str_starts_with(GARS_TIMING_DUMMY, '$2y$12$'), 'timing dummy is a cost-12 bcrypt hash');
-ok(str_contains($loginSrc, 'GARS_TIMING_DUMMY'), 'login equalises timing for unknown accounts');
-ok(str_contains($loginSrc, 'password_needs_rehash'), 'legacy hashes upgraded on successful login');
+ok(str_contains($loginCoreSrc, 'GARS_TIMING_DUMMY'), 'login equalises timing for unknown accounts');
+ok(str_contains($loginCoreSrc, 'password_needs_rehash'), 'legacy hashes upgraded on successful login');
 ok(str_contains($authSrc, "['cost' => 12]"), 'new passwords hashed at bcrypt cost 12');
 $uid = gars_create_user('unitcost_e2e', 'CostPass!2026', 'therapist', 'Unit Cost');
 $h = (string) $db->query("SELECT password_hash FROM users WHERE username='unitcost_e2e'")->fetchColumn();
@@ -392,6 +398,79 @@ $db->exec('DELETE FROM users WHERE username IN ("rbac_a", "rbac_b", "rbac_it2")'
 $db->exec("DELETE FROM role_groups WHERE name = 'Unit Panel'");
 $db->exec("DELETE FROM roles WHERE name IN ('e2e_unit_role', 'e2e_unit_solo')");
 gars_rbac_flush();
+
+echo "== API: bearer tokens, shared login core, JSON contract ==\n";
+$apiFrontSrc = file_get_contents(__DIR__ . '/../api/index.php');
+$apiLibSrc   = file_get_contents(__DIR__ . '/../includes/api.php');
+$routeSrc    = file_get_contents(__DIR__ . '/../route.php');
+$scoreSrc    = file_get_contents(__DIR__ . '/../score.php');
+$storeSrc    = file_get_contents(__DIR__ . '/../includes/assessment_store.php');
+
+ok(str_contains($routeSrc, '/api(?:/|$)'), 'router dispatches /api/... to the JSON front controller');
+ok(str_contains($apiFrontSrc, 'GARS_API_MODE'), 'API front controller sets GARS_API_MODE');
+ok(str_contains($authSrc, 'GARS_API_MODE'), 'session loader never starts a session in API mode');
+ok(str_contains($apiLibSrc, "hash('sha256'"), 'tokens are stored only as SHA-256 hashes');
+ok(str_contains($apiFrontSrc, 'gars_compute_scores'), 'API scoring reuses the server-side engine');
+ok(str_contains($scoreSrc, 'gars_persist_assessment') && str_contains($storeSrc, 'INSERT INTO assessments'),
+    'web and API persist records through the shared store');
+ok(str_contains($scoreSrc, 'gars_rating_missing') && str_contains($apiFrontSrc, 'gars_rating_missing'),
+    'web and API validate required fields through the shared list');
+ok(str_contains($itSrc, 'gars_api_revoke_user_tokens'), 'console revokes API tokens on deactivate/reset');
+
+gars_api_ensure_token_table();
+ok((bool) $db->query("SHOW TABLES LIKE 'api_tokens'")->fetchColumn(), 'api_tokens table exists');
+
+// issue / resolve / revoke
+$db->exec('DELETE FROM api_tokens');
+$plain = gars_api_issue_token(1, 'unit-test');
+ok(preg_match('/^[a-f0-9]{64}$/', $plain) === 1, 'issued token is 64 hex chars');
+$storedHash = $db->query('SELECT token_hash FROM api_tokens ORDER BY id DESC LIMIT 1')->fetchColumn();
+ok($storedHash === hash('sha256', $plain), 'database stores only the SHA-256 hash');
+$res = gars_api_resolve_token($plain);
+ok(isset($res['user']) && $res['user']['username'] === 'admin', 'valid token resolves to the user');
+ok((gars_api_resolve_token(str_repeat('a', 64))['error'] ?? '') === 'invalid_token', 'unknown token rejected');
+$tokenId = (int) ($res['token_id'] ?? 0);
+gars_api_revoke_token_id($tokenId);
+ok((gars_api_resolve_token($plain)['error'] ?? '') === 'token_revoked', 'revoked token rejected');
+
+// sliding idle expiry (same SESSION_TIMEOUT policy as web sessions)
+$plainIdle = gars_api_issue_token(1, 'unit-idle');
+$stale = date('Y-m-d H:i:s', time() - SESSION_TIMEOUT - 60);
+$db->exec("UPDATE api_tokens SET last_used_at = '$stale' WHERE token_hash = '" . hash('sha256', $plainIdle) . "'");
+ok((gars_api_resolve_token($plainIdle)['error'] ?? '') === 'token_expired', 'idle-expired token rejected');
+
+// deactivation kills live tokens
+$db->exec('DELETE FROM users WHERE username = "api_unit_probe"');
+$probeId = gars_create_user('api_unit_probe', 'ApiPass!2026', 'therapist', 'API Probe');
+$plainProbe = gars_api_issue_token($probeId, 'unit');
+ok(isset(gars_api_resolve_token($plainProbe)['user']), 'probe token resolves while active');
+$db->exec("UPDATE users SET is_active = 0 WHERE id = $probeId");
+ok((gars_api_resolve_token($plainProbe)['error'] ?? '') === 'account_disabled', 'disabled account token rejected');
+$db->exec("UPDATE users SET is_active = 1 WHERE id = $probeId");
+$plainProbe2 = gars_api_issue_token($probeId, 'unit');
+ok(gars_api_revoke_user_tokens($probeId) >= 1, 'all user tokens revoked in one call');
+ok((gars_api_resolve_token($plainProbe2)['error'] ?? '') === 'token_revoked', 'revoked user token rejected');
+
+// shared login core — the exact path the API hits
+$r = gars_attempt_login('api_unit_probe', 'WrongPass!1', '198.51.100.20');
+ok($r['ok'] === false && $r['blocked'] === false && $r['user'] === null, 'wrong password refused by shared core');
+$r = gars_attempt_login('no_such_user_xyz', 'WhateverPass1', '198.51.100.20');
+ok($r['ok'] === false && $r['blocked'] === false, 'unknown account refused (timing-dummy path)');
+$r = gars_attempt_login('api_unit_probe', 'ApiPass!2026', '198.51.100.20');
+ok($r['ok'] === true && (int) $r['user']['id'] === $probeId, 'correct password accepted by shared core');
+$db->exec("UPDATE users SET is_active = 0 WHERE id = $probeId");
+$r = gars_attempt_login('api_unit_probe', 'ApiPass!2026', '198.51.100.20');
+ok($r['ok'] === false && $r['blocked'] === false, 'inactive account refused by shared core');
+$missing = gars_rating_missing(['individual_name' => 'x', 'school' => '']);
+ok($missing === ['School', "Rater's Name", "Rater's Title", 'Date of Birth', 'Age', 'Gender',
+    "Examiner's Name", "Examiner's Title", 'Date of Rating'],
+    'shared required-field list reports the missing labels');
+
+// cleanup
+$db->exec("DELETE FROM login_attempts WHERE username = 'api_unit_probe' OR ip = '198.51.100.20'");
+$db->exec("DELETE FROM activity_logs WHERE details LIKE '%api_unit_probe%' OR details LIKE '%no_such_user_xyz%'");
+$db->exec('DELETE FROM users WHERE username = "api_unit_probe"');
+$db->exec('DELETE FROM api_tokens');
 
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

@@ -75,6 +75,11 @@ function gars_create_user(string $username, string $password, string $role, stri
 
 function gars_current_user(): ?array
 {
+    // the JSON API authenticates with bearer tokens and must never start a
+    // PHP session (no Set-Cookie on API responses)
+    if (defined('GARS_API_MODE') && GARS_API_MODE) {
+        return null;
+    }
     static $cached = false;
     static $user = null;
     if ($cached) {

@@ -10,6 +10,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/tracker.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/api.php';
 define('GARS_ROUTE', 'itadmin');
 
 /* ------------------------------------------------------------------- tabs */
@@ -189,6 +190,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     $db->prepare('UPDATE user_sessions SET logout_at = ? WHERE user_id = ? AND logout_at IS NULL')
                         ->execute([date('Y-m-d H:i:s'), $targetId]);
                 }
+                // mobile API tokens die with a deactivation or a password reset
+                $revokedTokens = ($willDeactivate || $newPass !== '')
+                    ? gars_api_revoke_user_tokens($targetId)
+                    : 0;
                 // sync direct roles
                 $currentRoles = array_map('intval', array_column(gars_user_direct_roles($targetId), 'id'));
                 foreach ($roleIds as $rid) {
@@ -220,6 +225,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     $bits[] = 'password reset';
                 }
                 $bits[] = $active ? 'active' : 'disabled';
+                if ($revokedTokens > 0) {
+                    $bits[] = $revokedTokens . ' API token(s) revoked';
+                }
                 gars_log_activity('user_update', 'itadmin', 'Updated ' . $target['username'] . ' (' . implode(', ', $bits) . ')');
                 gars_flash($target['username'] . ' saved.');
                 gars_redirect($back('users'));

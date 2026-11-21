@@ -11,6 +11,7 @@ require_once __DIR__ . '/includes/tracker.php';
 require_once __DIR__ . '/includes/ui.php';
 require_once __DIR__ . '/includes/rating_form.php';
 require_once __DIR__ . '/includes/scoring.php';
+require_once __DIR__ . '/includes/assessment_store.php';
 define('GARS_ROUTE', 'score');
 
 $currentUser = gars_require_login();
@@ -36,29 +37,8 @@ $raterKnownFor = trim($_POST['rater_known_for'] ?? '');
 $isMute = ($_POST['is_mute'] ?? 'no') === 'yes';
 
 // --- REQUIRED-field validation: nothing is saved until these are filled ------
-$missing = gars_validate_required([
-    'individual_name' => $individualName,
-    'school'          => $school,
-    'rater_name'      => $raterName,
-    'rater_title'     => $raterTitle,
-    'date_of_birth'   => $dob,
-    'age'             => $age,
-    'gender'          => $gender,
-    'examiner_name'   => $examinerName,
-    'examiner_title'  => $examinerTitle,
-    'date_of_rating'  => $dateOfRating,
-], [
-    'individual_name' => "Individual's Name",
-    'school'          => 'School',
-    'rater_name'      => "Rater's Name",
-    'rater_title'     => "Rater's Title",
-    'date_of_birth'   => 'Date of Birth',
-    'age'             => 'Age',
-    'gender'          => 'Gender',
-    'examiner_name'   => "Examiner's Name",
-    'examiner_title'  => "Examiner's Title",
-    'date_of_rating'  => 'Date of Rating',
-]);
+// (shared with the JSON API — includes/assessment_store.php)
+$missing = gars_rating_missing($_POST);
 
 if ($missing) {
     gars_log_activity('validation_failed', 'score', 'Assessment not saved — missing required field(s): ' . implode(', ', $missing));
@@ -102,44 +82,7 @@ $descriptor = $computed['descriptor'];
 // --- save the record in the database + record the change in the audit trail --
 $savedId = null;
 try {
-    $scaledStr = [];
-    $pctStr = [];
-    foreach ($subscaleResults as $s) {
-        $scaledStr[] = strtoupper($s['short']) . '=' . ($s['scaled_score'] ?? '-');
-        $pctStr[]    = strtoupper($s['short']) . '=' . ($s['percentile_rank'] ?? '-');
-    }
-    $itemScoresJson = json_encode(array_map(
-        fn ($s) => [$s['short'] => $s['item_scores']],
-        $subscaleResults
-    ));
-
-    $stmt = gars_db()->prepare(
-        'INSERT INTO assessments
-            (created_by, individual_name, school, rater_name, rater_title, date_of_birth, age, gender, grade,
-             examiner_name, examiner_title, date_of_rating, rater_known_for, is_mute,
-             raw_rb, raw_si, raw_sc, raw_er, raw_cs, raw_ms, scaled, percentiles, sum_scaled,
-             composite_percentile, autism_index, probability, severity_level, severity_desc, item_scores)
-         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    );
-    $rawByShort = [];
-    foreach ($subscaleResults as $s) {
-        $rawByShort[$s['short']] = (int) $s['raw_score'];
-    }
-    $stmt->execute([
-        $currentUser['id'],
-        $individualName, $school, $raterName, $raterTitle,
-        $dob !== '' ? $dob : null, $age, $gender, $grade !== '' ? $grade : null,
-        $examinerName, $examinerTitle, $dateOfRating !== '' ? $dateOfRating : null, $raterKnownFor,
-        $isMute ? 1 : 0,
-        $rawByShort['RB'] ?? 0, $rawByShort['SI'] ?? 0, $rawByShort['SC'] ?? 0,
-        $rawByShort['ER'] ?? 0, $rawByShort['CS'] ?? 0, $rawByShort['MS'] ?? 0,
-        implode('|', $scaledStr), implode('|', $pctStr), $sumScaled,
-        (string) $compositePercentile ?: '-', (int) $autismIndex,
-        (string) $probability ?: '-', (string) $severity ?: '-', (string) $descriptor ?: '-',
-        $itemScoresJson,
-    ]);
-    $savedId = (int) gars_db()->lastInsertId();
+    $savedId = gars_persist_assessment((int) $currentUser['id'], $_POST, $computed);
     gars_log_activity(
         'create_assessment',
         'score',

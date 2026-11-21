@@ -114,7 +114,10 @@ function gars_session_token(): string
 function gars_log_activity(string $action, ?string $page = null, ?string $details = null, ?int $sessionRowId = null): void
 {
     try {
-        $user = function_exists('gars_current_user') ? gars_current_user() : null;
+        // explicit actor first: the login flow and the JSON API log before the
+        // session identity is visible to gars_current_user()'s cache
+        $user = $GLOBALS['GARS_LOG_ACTOR']
+            ?? (function_exists('gars_current_user') ? gars_current_user() : null);
         $stmt = gars_db()->prepare(
             'INSERT INTO activity_logs (user_id, user_session_id, username, role, action, page, details, ip_address, user_agent)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'

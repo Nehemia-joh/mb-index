@@ -78,6 +78,14 @@ if ($requested !== '/' && str_contains($requested, '.')) {
     }
 }
 
+// JSON API for the mobile app (/api/v1/...) — checked on the RAW path, before
+// the mount-point strip below can remove an "api/" segment (php -S sets
+// SCRIPT_NAME to the request path, which would otherwise eat the prefix)
+if (preg_match('#/api(?:/|$)#', $requested)) {
+    require GARS_APP_ROOT . '/api/index.php';
+    exit;
+}
+
 $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/'));
 if ($scriptDir !== '/' && str_starts_with($requested, rtrim($scriptDir, '/'))) {
     $requested = substr($requested, strlen(rtrim($scriptDir, '/')));
