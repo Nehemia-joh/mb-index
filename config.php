@@ -45,7 +45,15 @@ $GARS_ENV = gars_load_env(GARS_ENV_FILE);
 function env(string $key, $default = null)
 {
     global $GARS_ENV;
-    $value = $GARS_ENV[$key] ?? ($_ENV[$key] ?? getenv($key) ?: null);
+    $value = $GARS_ENV[$key] ?? ($_ENV[$key] ?? null);
+    if ($value === null || $value === '') {
+        $process = getenv($key); // real environment, e.g. FORCE_HTTPS=0
+        if ($process !== false) {
+            $value = $process;
+        }
+    }
+    // NOTE: never use `?:` here — the string "0" is falsy in PHP and would
+    // silently drop legitimate flag values such as FORCE_HTTPS=0.
     return ($value === null || $value === '') ? $default : $value;
 }
 
