@@ -415,6 +415,13 @@ ok(str_contains($scoreSrc, 'gars_persist_assessment') && str_contains($storeSrc,
     'web and API persist records through the shared store');
 ok(str_contains($scoreSrc, 'gars_rating_missing') && str_contains($apiFrontSrc, 'gars_rating_missing'),
     'web and API validate required fields through the shared list');
+$editSrc = file_get_contents(__DIR__ . '/../edit.php');
+ok(str_contains($storeSrc, 'UPDATE assessments') && str_contains($editSrc, 'gars_update_assessment')
+    && !str_contains($editSrc, 'UPDATE assessments'),
+    'web edit reuses the shared recalculation UPDATE in the store');
+ok(str_contains($apiFrontSrc, 'PUT    /api/v1/assessments/{id}')
+    && str_contains($apiFrontSrc, 'gars_update_assessment'),
+    'API exposes PUT /assessments/{id} through the shared store');
 ok(str_contains($itSrc, 'gars_api_revoke_user_tokens'), 'console revokes API tokens on deactivate/reset');
 
 gars_api_ensure_token_table();

@@ -185,7 +185,7 @@ class RecordsTabState extends State<RecordsTab> {
     try {
       final detail = await session.client.getAssessment(summary.id);
       if (!mounted) return;
-      await Navigator.of(context).push(
+      final edited = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => ReportScreen(
             detail: detail,
@@ -194,6 +194,9 @@ class RecordsTabState extends State<RecordsTab> {
           ),
         ),
       );
+      // an edit recalculates the record — refresh so the list shows the
+      // new Autism Index / severity
+      if (edited == true && mounted) await refresh();
     } on ApiException catch (e) {
       if (e.isAuth && mounted) {
         await session.sessionExpired(e.message);

@@ -20,10 +20,13 @@
  *   GET    /api/v1/assessments     list (own records; admins see all) ?page&per_page
  *   POST   /api/v1/assessments     raw rating form -> scored, stored, 201
  *   GET    /api/v1/assessments/{id} full stored record
+ *   PUT    /api/v1/assessments/{id} full rating form -> re-scored, updated, 200
  *
- * Scoring never happens on the phone: POST sends the raw item answers and the
- * server runs the same gars_compute_scores() as the website, so scoring-table
- * revisions apply instantly to every client.
+ * Scoring never happens on the phone: POST/PUT send the raw item answers and
+ * the server runs the same gars_compute_scores() as the website, so scoring-table
+ * revisions apply instantly to every client. PUT is a full-form replace with
+ * the same contract as POST (never a partial patch), so a record can never
+ * hold a half-updated state.
  */
 
 declare(strict_types=1);
@@ -65,6 +68,7 @@ $endpoints = [
     'GET    /api/v1/assessments',
     'POST   /api/v1/assessments',
     'GET    /api/v1/assessments/{id}',
+    'PUT    /api/v1/assessments/{id}',
 ];
 
 if ($method === 'GET' && $path === '') {
@@ -234,6 +238,59 @@ if ($path === 'assessments' || str_starts_with($path, 'assessments/')) {
             gars_api_error('Record not found.', 404, 'not_found');
         }
         gars_api_json(['record' => gars_assessment_api_shape($row)]);
+    }
+
+    if ($method === 'PUT' && preg_match('#^assessments/(\d+)$#', $path, $m2)) {
+        $id = (int) $m2[1];
+        $stmt = gars_db()->prepare(
+            'SELECT a.*, u.username AS creator FROM assessments a
+             LEFT JOIN users u ON u.id = a.created_by WHERE a.id = ?'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+        // same visibility rule as GET: other people's records do not exist
+        // for non-admins (no existence leak, no cross-therapist edits)
+        if (!$row || (!gars_api_sees_all_records($user) && (int) $row['created_by'] !== (int) $user['id'])) {
+            gars_api_error('Record not found.', 404, 'not_found');
+        }
+        $body = gars_api_body();
+        $missing = gars_rating_missing($body);
+        if ($missing) {
+            gars_api_error(
+                'Missing required field(s): ' . implode(', ', $missing) . '.',
+                422,
+                'validation',
+                ['missing' => $missing]
+            );
+        }
+        $isMute = ($body['is_mute'] ?? 'no') === 'yes';
+        $computed = gars_compute_scores($body, $isMute);
+        $oldIndex = (int) $row['autism_index'];
+        try {
+            gars_update_assessment($id, $body, $computed);
+        } catch (Throwable $e) {
+            error_log('[api] assessment update failed: ' . $e->getMessage());
+            gars_log_activity('save_failed', 'api', 'Assessment update failed for record #' . $id . ': ' . $e->getMessage());
+            gars_api_error('The record could not be updated.', 500, 'save_failed');
+        }
+        $GLOBALS['GARS_LOG_ACTOR'] = $user;
+        gars_log_activity(
+            'update_assessment',
+            'api',
+            'API recalculated record #' . $id . ' for "' . trim((string) ($body['individual_name'] ?? ''))
+                . '": Autism Index ' . $oldIndex . ' to ' . (int) $computed['autism_index']
+        );
+        $stmt = gars_db()->prepare(
+            'SELECT a.*, u.username AS creator FROM assessments a
+             LEFT JOIN users u ON u.id = a.created_by WHERE a.id = ?'
+        );
+        $stmt->execute([$id]);
+        $fresh = $stmt->fetch();
+        gars_api_json([
+            'id'     => $id,
+            'record' => $fresh ? gars_assessment_api_shape($fresh) : null,
+            'report' => $computed,
+        ], 200);
     }
 
     // known resource, wrong verb

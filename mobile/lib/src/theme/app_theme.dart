@@ -357,21 +357,33 @@ class NoticeBar extends StatelessWidget {
       NoticeKind.warn => (Brand.amberSoft, Brand.amber, Brand.ink),
       NoticeKind.info => (Brand.brandSoft, Brand.brand, Brand.ink),
     };
+    // Uniform border colour (Flutter rejects mixed-colour borders on a
+    // rounded box at paint time); the web notice's left rule is a clipped
+    // overlay strip instead.
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.only(left: 14, right: 14, top: 12, bottom: 12),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(3),
-        border: Border(
-          left: BorderSide(color: edge, width: 3),
-          top: BorderSide(color: edge.withOpacity(.25)),
-          right: BorderSide(color: edge.withOpacity(.25)),
-          bottom: BorderSide(color: edge.withOpacity(.25)),
-        ),
+        border: Border.all(color: edge.withOpacity(.3)),
       ),
-      child: Text(message,
-          style: TextStyle(color: fg, fontSize: 14, height: 1.4)),
+      child: Stack(
+        clipBehavior: Clip.none, // strip spans the padding; the container's
+        // own clip (with the radius) trims it to the rounded box
+        children: [
+          Positioned(
+            left: -14, // cancel the padding: strip sits flush on the border
+            top: -12,
+            bottom: -12,
+            width: 3,
+            child: ColoredBox(color: edge),
+          ),
+          Text(message,
+              style: TextStyle(color: fg, fontSize: 14, height: 1.4)),
+        ],
+      ),
     );
   }
 }

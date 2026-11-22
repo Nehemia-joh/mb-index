@@ -99,47 +99,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     $oldIndex = (int) $rec['autism_index'];
     $computed = gars_compute_scores($_POST, $isMute);
-    $subscaleResults = $computed['subscale_results'];
     $autismIndex = $computed['autism_index'];
 
     try {
-        $scaledStr = [];
-        $pctStr = [];
-        $rawByShort = [];
-        foreach ($subscaleResults as $s) {
-            $scaledStr[] = strtoupper($s['short']) . '=' . ($s['scaled_score'] ?? '-');
-            $pctStr[]    = strtoupper($s['short']) . '=' . ($s['percentile_rank'] ?? '-');
-            $rawByShort[$s['short']] = (int) $s['raw_score'];
-        }
-        $itemScoresJson = json_encode(array_map(
-            fn ($s) => [$s['short'] => $s['item_scores']],
-            $subscaleResults
-        ));
-
-        $upd = $db->prepare(
-            'UPDATE assessments SET
-                individual_name = ?, school = ?, rater_name = ?, rater_title = ?, date_of_birth = ?, age = ?, gender = ?, grade = ?,
-                examiner_name = ?, examiner_title = ?, date_of_rating = ?, rater_known_for = ?, is_mute = ?,
-                raw_rb = ?, raw_si = ?, raw_sc = ?, raw_er = ?, raw_cs = ?, raw_ms = ?,
-                scaled = ?, percentiles = ?, sum_scaled = ?, composite_percentile = ?, autism_index = ?,
-                probability = ?, severity_level = ?, severity_desc = ?, item_scores = ?
-             WHERE id = ?'
-        );
-        $upd->execute([
-            $individualName, $school, $raterName, $raterTitle,
-            $dob !== '' ? $dob : null, $age, $gender, $grade !== '' ? $grade : null,
-            $examinerName, $examinerTitle, $dateOfRating !== '' ? $dateOfRating : null, $raterKnownFor,
-            $isMute ? 1 : 0,
-            $rawByShort['RB'] ?? 0, $rawByShort['SI'] ?? 0, $rawByShort['SC'] ?? 0,
-            $rawByShort['ER'] ?? 0, $rawByShort['CS'] ?? 0, $rawByShort['MS'] ?? 0,
-            implode('|', $scaledStr), implode('|', $pctStr), $computed['sum_scaled'],
-            (string) ($computed['composite_percentile'] ?? '') ?: '-', (int) $autismIndex,
-            (string) ($computed['probability'] ?? '') ?: '-',
-            (string) ($computed['severity'] ?? '') ?: '-',
-            (string) ($computed['descriptor'] ?? '') ?: '-',
-            $itemScoresJson,
-            $id,
-        ]);
+        gars_update_assessment($id, $_POST, $computed);
 
         gars_log_activity(
             'update_assessment',

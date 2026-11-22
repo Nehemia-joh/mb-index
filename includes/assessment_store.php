@@ -105,6 +105,60 @@ function gars_persist_assessment(int $userId, array $post, array $computed): int
     return (int) gars_db()->lastInsertId();
 }
 
+/**
+ * Recalculate and overwrite an existing assessment row — the shared write
+ * path of edit.php (web) and PUT /api/v1/assessments/{id} (mobile). Same
+ * field contract as gars_persist_assessment(); created_by is never touched,
+ * so an administrator correcting someone else's record keeps the original
+ * authorship. Throws whatever the database throws.
+ */
+function gars_update_assessment(int $id, array $post, array $computed): void
+{
+    $t = fn (string $key): string => trim((string) ($post[$key] ?? ''));
+    $dob          = (string) ($post['date_of_birth'] ?? '');
+    $grade        = $t('grade');
+    $dateOfRating = (string) ($post['date_of_rating'] ?? '');
+    $isMute       = ($post['is_mute'] ?? 'no') === 'yes';
+
+    $scaledStr = [];
+    $pctStr = [];
+    $rawByShort = [];
+    foreach ($computed['subscale_results'] as $s) {
+        $scaledStr[] = strtoupper($s['short']) . '=' . ($s['scaled_score'] ?? '-');
+        $pctStr[]    = strtoupper($s['short']) . '=' . ($s['percentile_rank'] ?? '-');
+        $rawByShort[$s['short']] = (int) $s['raw_score'];
+    }
+    $itemScoresJson = json_encode(array_map(
+        fn ($s) => [$s['short'] => $s['item_scores']],
+        $computed['subscale_results']
+    ));
+
+    $upd = gars_db()->prepare(
+        'UPDATE assessments SET
+            individual_name = ?, school = ?, rater_name = ?, rater_title = ?, date_of_birth = ?, age = ?, gender = ?, grade = ?,
+            examiner_name = ?, examiner_title = ?, date_of_rating = ?, rater_known_for = ?, is_mute = ?,
+            raw_rb = ?, raw_si = ?, raw_sc = ?, raw_er = ?, raw_cs = ?, raw_ms = ?,
+            scaled = ?, percentiles = ?, sum_scaled = ?, composite_percentile = ?, autism_index = ?,
+            probability = ?, severity_level = ?, severity_desc = ?, item_scores = ?
+         WHERE id = ?'
+    );
+    $upd->execute([
+        $t('individual_name'), $t('school'), $t('rater_name'), $t('rater_title'),
+        $dob !== '' ? $dob : null, $t('age'), $t('gender'), $grade !== '' ? $grade : null,
+        $t('examiner_name'), $t('examiner_title'), $dateOfRating !== '' ? $dateOfRating : null, $t('rater_known_for'),
+        $isMute ? 1 : 0,
+        $rawByShort['RB'] ?? 0, $rawByShort['SI'] ?? 0, $rawByShort['SC'] ?? 0,
+        $rawByShort['ER'] ?? 0, $rawByShort['CS'] ?? 0, $rawByShort['MS'] ?? 0,
+        implode('|', $scaledStr), implode('|', $pctStr), $computed['sum_scaled'],
+        (string) ($computed['composite_percentile'] ?? '') ?: '-', (int) $computed['autism_index'],
+        (string) ($computed['probability'] ?? '') ?: '-',
+        (string) ($computed['severity'] ?? '') ?: '-',
+        (string) ($computed['descriptor'] ?? '') ?: '-',
+        $itemScoresJson,
+        $id,
+    ]);
+}
+
 /** Split "RB=10|SI=11|…" into ['RB' => 10, …]; scaled values may be "-". */
 function gars_score_map(?string $encoded): array
 {

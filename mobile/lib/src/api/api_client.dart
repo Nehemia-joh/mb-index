@@ -236,5 +236,19 @@ class ApiClient {
         (data['record'] as Map?)?.cast<String, dynamic>() ?? const {});
   }
 
+  /// PUT the full rating form over an existing record; the server re-scores
+  /// it with the same engine as POST and returns the updated record + report.
+  /// Never auto-retried — _request only replays GETs on stale sockets.
+  Future<({Report report, AssessmentDetail record})> updateAssessment(
+      int id, Map<String, dynamic> form) async {
+    final data = await _request('PUT', '/assessments/$id', body: form);
+    return (
+      report: Report.fromJson(
+          (data['report'] as Map?)?.cast<String, dynamic>() ?? const {}),
+      record: AssessmentDetail.fromJson(
+          (data['record'] as Map?)?.cast<String, dynamic>() ?? const {}),
+    );
+  }
+
   void close() => _http.close();
 }

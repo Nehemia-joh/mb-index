@@ -227,6 +227,7 @@ class AssessmentDetail {
     required this.raterKnownFor,
     required this.isMute,
     required this.raw,
+    this.itemScores = const {},
     required this.scaled,
     required this.percentiles,
     required this.sumScaled,
@@ -253,6 +254,11 @@ class AssessmentDetail {
   final String? raterKnownFor;
   final bool isMute;
   final Map<String, num> raw;
+
+  /// The stored 0–3 mark of every item, keyed by subscale short code
+  /// (RB, SI, …) in question order — what edit.php rebuilds its form from,
+  /// and what the app prefills when editing a record.
+  final Map<String, List<int>> itemScores;
   final Map<String, num> scaled;
   final Map<String, num> percentiles;
   final int sumScaled;
@@ -279,6 +285,25 @@ class AssessmentDetail {
     }
 
     final scores = (json['scores'] as Map?) ?? const {};
+
+    // item_scores: [{RB: [0,1,…]}, {SI: […]}, …] — one single-key entry
+    // per subscale, values in question order (same shape edit.php reads).
+    final itemScores = <String, List<int>>{};
+    final rawItems = json['item_scores'];
+    if (rawItems is List) {
+      for (final entry in rawItems) {
+        if (entry is Map) {
+          entry.forEach((key, value) {
+            if (value is List) {
+              itemScores['$key'] = [
+                for (final v in value) (v is num ? v.toInt() : 0),
+              ];
+            }
+          });
+        }
+      }
+    }
+
     return AssessmentDetail(
       id: (json['id'] as num?)?.toInt() ?? 0,
       individualName: json['individual_name'] as String? ?? '',
@@ -295,6 +320,7 @@ class AssessmentDetail {
       raterKnownFor: json['rater_known_for'] as String?,
       isMute: json['is_mute'] as bool? ?? false,
       raw: numMap(scores['raw']),
+      itemScores: itemScores,
       scaled: numMap(scores['scaled']),
       percentiles: numMap(scores['percentiles']),
       sumScaled: (scores['sum_scaled'] as num?)?.toInt() ?? 0,

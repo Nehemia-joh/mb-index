@@ -9,12 +9,19 @@ import 'report_screen.dart';
 
 /// The Maisha Bora rating form: demographics + six subscales, rendered from
 /// GET /meta/form so item wordings always match the server.
+///
+/// Doubles as the edit screen: pass [editRecord] to reopen a stored record
+/// (fields and item marks prefilled); saving then PUTs the full form and the
+/// server re-scores the same row, exactly like edit.php on the web.
 class FormScreen extends StatefulWidget {
-  const FormScreen({super.key, this.onRecordSaved});
+  const FormScreen({super.key, this.onRecordSaved, this.editRecord});
 
   /// Called once a record is saved and its report dismissed, so the shell
   /// can land on the refreshed Records tab.
   final VoidCallback? onRecordSaved;
+
+  /// The stored record to edit, or null for a new assessment.
+  final AssessmentDetail? editRecord;
 
   @override
   State<FormScreen> createState() => _FormScreenState();
@@ -25,6 +32,9 @@ class _FormScreenState extends State<FormScreen> {
   String? _loadError;
   bool _submitting = false;
   String? _submitError;
+  bool _prefilled = false;
+
+  bool get _isEdit => widget.editRecord != null;
 
   final _fields = <String, TextEditingController>{};
   String _gender = '';
@@ -77,6 +87,11 @@ class _FormScreenState extends State<FormScreen> {
             _items.putIfAbsent('${sub.id}_item_$i', () => 0);
           }
         }
+        final rec = widget.editRecord;
+        if (rec != null && !_prefilled) {
+          _prefilled = true;
+          _prefillFromRecord(meta, rec);
+        }
       });
       _autoFillAge(overwrite: false); // fill only when still empty
     } on ApiException catch (e) {
@@ -127,6 +142,37 @@ class _FormScreenState extends State<FormScreen> {
     field.text = '$years';
   }
 
+  /// Load a stored record into the form — the same rebuild edit.php does
+  /// from assessments.item_scores on the web.
+  void _prefillFromRecord(FormMeta meta, AssessmentDetail rec) {
+    void put(String key, String? value) {
+      final v = (value ?? '').trim();
+      if (v.isNotEmpty) _fields[key]?.text = v;
+    }
+
+    put('individual_name', rec.individualName);
+    put('school', rec.school);
+    put('rater_name', rec.raterName);
+    put('rater_title', rec.raterTitle);
+    put('age', rec.age);
+    put('examiner_name', rec.examinerName);
+    put('examiner_title', rec.examinerTitle);
+    put('grade', rec.grade);
+    put('rater_known_for', rec.raterKnownFor);
+    if (meta.genderOptions.contains(rec.gender)) _gender = rec.gender;
+    _isMute = rec.isMute;
+    _dob = DateTime.tryParse(rec.dateOfBirth ?? '');
+    _dateOfRating = DateTime.tryParse(rec.dateOfRating ?? '');
+    for (final sub in meta.subscales) {
+      final marks = rec.itemScores[sub.short];
+      if (marks == null) continue;
+      for (var i = 0; i < sub.itemCount && i < marks.length; i++) {
+        final v = marks[i];
+        _items['${sub.id}_item_$i'] = v < 0 ? 0 : (v > 3 ? 3 : v);
+      }
+    }
+  }
+
   Map<String, dynamic> _buildPayload() {
     final payload = <String, dynamic>{
       for (final f in _textFields) f: _fields[f]!.text.trim(),
@@ -164,6 +210,25 @@ class _FormScreenState extends State<FormScreen> {
     });
     final session = context.read<Session>();
     try {
+      if (_isEdit) {
+        final result = await session.client
+            .updateAssessment(widget.editRecord!.id, payload);
+        if (!mounted) return;
+        await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => ReportScreen(
+              detail: result.record,
+              report: result.report,
+              recordId: result.record.id,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        // the record is saved — close the edit form; the report screen that
+        // opened us closes itself and the records list refreshes
+        Navigator.of(context).pop(true);
+        return;
+      }
       final result = await session.client.createAssessment(payload);
       if (!mounted) return;
       await Navigator.of(context).push<bool>(
@@ -183,11 +248,15 @@ class _FormScreenState extends State<FormScreen> {
         return;
       }
       if (mounted) {
-        setState(() => _submitError =
-            e.statusCode == 422 ? e.message : 'Not saved: ${e.message}');
+        setState(() => _submitError = e.statusCode == 422
+            ? e.message
+            : '${_isEdit ? 'Not updated' : 'Not saved'}: ${e.message}');
       }
     } catch (_) {
-      if (mounted) setState(() => _submitError = 'Not saved — unexpected error.');
+      if (mounted) {
+        setState(() => _submitError =
+            '${_isEdit ? 'Not updated' : 'Not saved'} — unexpected error.');
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -210,12 +279,24 @@ class _FormScreenState extends State<FormScreen> {
     final meta = _meta;
 
     return Scaffold(
-      appBar: AppBar(title: const BrandWordmark()),
+      appBar: AppBar(
+        title: _isEdit
+            ? Text('Edit record #${widget.editRecord!.id}')
+            : const BrandWordmark(),
+      ),
       body: meta == null
           ? _buildLoading(theme)
           : ListView(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
               children: [
+                if (_isEdit) ...[
+                  NoticeBar(
+                    'Editing record #${widget.editRecord!.id} — saving recalculates '
+                    'the Autism Index and updates this same record. The audit '
+                    'trail keeps a note of every recalculation.',
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 if (_submitError != null) ...[
                   NoticeBar(_submitError!, kind: NoticeKind.error),
                   const SizedBox(height: 10),
@@ -238,9 +319,14 @@ class _FormScreenState extends State<FormScreen> {
                           height: 18,
                           width: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.calculate_outlined),
-                  label: Text(
-                      _submitting ? 'Scoring…' : 'Score and save record'),
+                      : Icon(_isEdit
+                          ? Icons.sync_outlined
+                          : Icons.calculate_outlined),
+                  label: Text(_submitting
+                      ? (_isEdit ? 'Recalculating…' : 'Scoring…')
+                      : (_isEdit
+                          ? 'Recalculate and update'
+                          : 'Score and save record')),
                 ),
               ),
             ),

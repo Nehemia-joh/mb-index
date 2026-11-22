@@ -684,6 +684,48 @@ CODE=$(curl -s -o "$OUT/api-detail.json" -w "%{http_code}" -H "Authorization: Be
 check "record detail served" "200" "$CODE"
 check "detail carries the Autism Index" "$EXPECT_AI" "$(jget "$OUT/api-detail.json" data.record.scores.autism_index)"
 
+# PUT recalculates an existing record through the same engine + store as the web edit.
+# The expected values come from the engine itself (whatever scoring revision is
+# active during the run): the report carries the raw value (number or null) and
+# the NOT NULL column stores its int cast (null -> 0).
+php -r '
+$p = json_decode(file_get_contents($argv[1]), true);
+$p["individual_name"] = "E2E-API-Record-Edited";
+$p["school"] = "API School Updated";
+foreach (array_keys($p) as $k) { if (str_contains($k, "_item_")) $p[$k] = 3; }
+file_put_contents($argv[1], json_encode($p));
+' "$OUT/api-payload.json"
+AI2=$(php -r '
+require "config.php"; require "includes/db.php"; require "includes/scoring.php";
+$p = json_decode(file_get_contents($argv[1]), true);
+$c = gars_compute_scores($p, false);
+echo json_encode($c["autism_index"]), " ", (int) $c["autism_index"];' "$OUT/api-payload.json")
+EXPECT_AI2=${AI2%% *}
+EXPECT_AI2_DB=${AI2##* }
+CODE=$(curl -s -o "$OUT/api-update.json" -w "%{http_code}" -X PUT \
+  -H "Authorization: Bearer $ATOKEN" -H "Content-Type: application/json" \
+  --data-binary @"$OUT/api-payload.json" "$BASE/api/v1/assessments/$AID")
+check "record updated through the API" "200" "$CODE"
+check "PUT re-scores with the server engine" "$EXPECT_AI2" "$(jget "$OUT/api-update.json" data.report.autism_index)"
+check "PUT returns the updated record" "E2E-API-Record-Edited" "$(jget "$OUT/api-update.json" data.record.individual_name)"
+CODE=$(curl -s -o "$OUT/api-detail2.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments/$AID")
+check "edited record reads back with the new score" "$EXPECT_AI2_DB" "$(jget "$OUT/api-detail2.json" data.record.scores.autism_index)"
+check "PUT stores the new item marks (RB raw = 13 x 3)" "39" "$(jget "$OUT/api-detail2.json" data.record.scores.raw.RB)"
+contains "edited name stored" "$OUT/api-detail2.json" "E2E-API-Record-Edited"
+
+CODE=$(curl -s -o "$OUT/api-update-missing.json" -w "%{http_code}" -X PUT \
+  -H "Authorization: Bearer $ATOKEN" -H "Content-Type: application/json" -d '{}' \
+  "$BASE/api/v1/assessments/$AID")
+check "empty PUT rejected with 422" "422" "$CODE"
+contains "PUT validation error code" "$OUT/api-update-missing.json" "validation"
+CODE=$(curl -s -o "$OUT/api-detail3.json" -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments/$AID")
+check "failed PUT leaves the record untouched" "$EXPECT_AI2_DB" "$(jget "$OUT/api-detail3.json" data.record.scores.autism_index)"
+
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+  -H "Authorization: Bearer $ATOKEN" -H "Content-Type: application/json" -d '{}' \
+  "$BASE/api/v1/assessments/99999999")
+check "PUT on a missing record gets 404" "404" "$CODE"
+
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/assessments/$AID")
 check "DELETE on a read endpoint gets 405" "405" "$CODE"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/nope")
@@ -706,6 +748,15 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TTOKEN"
 check "therapist can read their own record" "200" "$CODE"
 curl -s -o "$OUT/api-tlist.json" -H "Authorization: Bearer $TTOKEN" "$BASE/api/v1/assessments"
 check "therapist list scope is own" "own" "$(jget "$OUT/api-tlist.json" data.scope)"
+
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H "Authorization: Bearer $TTOKEN" -H "Content-Type: application/json" \
+  --data-binary @"$OUT/api-payload-t.json" "$BASE/api/v1/assessments/$AID")
+check "therapist cannot update someone else's record" "404" "$CODE"
+php -r '$p=json_decode(file_get_contents($argv[1]),true); $p["school"]="Own School Updated"; file_put_contents($argv[1], json_encode($p));' "$OUT/api-payload-t.json"
+CODE=$(curl -s -o "$OUT/api-tupdate.json" -w "%{http_code}" -X PUT -H "Authorization: Bearer $TTOKEN" -H "Content-Type: application/json" \
+  --data-binary @"$OUT/api-payload-t.json" "$BASE/api/v1/assessments/$TID")
+check "therapist can update their own record" "200" "$CODE"
+check "therapist's own update stored" "Own School Updated" "$(jget "$OUT/api-tupdate.json" data.record.school)"
 
 # logout kills the token
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATOKEN" "$BASE/api/v1/auth/logout")

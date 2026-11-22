@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../theme/app_theme.dart';
+import 'form_screen.dart';
 
 /// Scoring report after a save, and the read-only view of a stored record.
 class ReportScreen extends StatelessWidget {
@@ -236,6 +237,23 @@ class ReportScreen extends StatelessWidget {
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Done — back to records'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final edited = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => FormScreen(editRecord: detail),
+                ),
+              );
+              if (edited == true && context.mounted) {
+                // scores may have changed — close this stale view so the
+                // caller (records list / new-record flow) can refresh
+                Navigator.of(context).pop(true);
+              }
+            },
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            label: const Text('Edit record'),
           ),
         ],
       ),

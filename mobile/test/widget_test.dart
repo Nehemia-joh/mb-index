@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:provider/provider.dart';
 
 import 'package:maisha_bora/main.dart';
 import 'package:maisha_bora/src/api/api_client.dart';
 import 'package:maisha_bora/src/api/models.dart';
+import 'package:maisha_bora/src/screens/report_screen.dart';
 import 'package:maisha_bora/src/state/session.dart';
 import 'package:maisha_bora/src/util/age.dart';
 
@@ -114,6 +116,31 @@ void main() {
       expect(detail.percentiles['SI'], 75);
       expect(detail.severityLevel, 'Level 3');
       expect(detail.isMute, isFalse);
+    });
+
+    test('AssessmentDetail reads stored item marks for editing', () {
+      final detail = AssessmentDetail.fromJson({
+        'id': 7,
+        'individual_name': 'Joan',
+        'scores': {
+          'raw': {'RB': 3},
+          'autism_index': 78,
+        },
+        // same single-key-per-subscale shape edit.php rebuilds from
+        'item_scores': [
+          {'RB': [2, 1, 0, 3]},
+          {'SI': [1, 1]},
+          {'not-a-list': 'ignored'},
+        ],
+      });
+      expect(detail.itemScores['RB'], [2, 1, 0, 3]);
+      expect(detail.itemScores['SI'], [1, 1]);
+      expect(detail.itemScores.containsKey('not-a-list'), isFalse);
+      // absent key stays empty — a legacy row without marks just opens blank
+      expect(
+          AssessmentDetail.fromJson({'id': 1, 'scores': <String, dynamic>{}})
+              .itemScores,
+          isEmpty);
     });
 
     test('ApiException flags dead-session codes', () {
@@ -269,6 +296,76 @@ void main() {
     });
   });
 
+  group('record editing', () {
+    test('updateAssessment PUTs the full form and parses the response',
+        () async {
+      var calls = 0;
+      String? method;
+      String? path;
+      Map<String, dynamic>? sent;
+      final client = ApiClient(
+        baseUrl: 'https://mb-index.nexabie.co.tz/api/v1',
+        httpClient: MockClient((request) async {
+          calls++;
+          method = request.method;
+          path = request.url.path;
+          sent = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'data': {
+                'id': 7,
+                'record': {
+                  'id': 7,
+                  'individual_name': sent!['individual_name'],
+                  'scores': {'autism_index': 91},
+                },
+                'report': {
+                  'autism_index': 91,
+                  'sum_scaled': 70,
+                  'subscale_results': <dynamic>[],
+                },
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      addTearDown(client.close);
+
+      final result = await client
+          .updateAssessment(7, {'individual_name': 'Joan', 'rb_item_0': 3});
+      expect(calls, 1, reason: 'a PUT is never silently replayed');
+      expect(method, 'PUT');
+      expect(path, '/api/v1/assessments/7');
+      expect(sent!['rb_item_0'], 3, reason: 'the full form travels');
+      expect(result.report.autismIndex, 91);
+      expect(result.record.id, 7);
+      expect(result.record.individualName, 'Joan');
+    });
+
+    test('a PUT failure surfaces as an ApiException, not a retry', () async {
+      var calls = 0;
+      final client = ApiClient(
+        baseUrl: 'https://mb-index.nexabie.co.tz/api/v1',
+        httpClient: MockClient((request) async {
+          calls++;
+          throw const SocketException('connection reset');
+        }),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.updateAssessment(7, {'individual_name': 'Joan'}),
+        throwsA(isA<ApiException>()
+            .having((e) => e.code, 'code', 'network')
+            .having((e) => e.statusCode, 'statusCode', 0)),
+      );
+      expect(calls, 1, reason: 'only GETs are retried on stale sockets');
+    });
+  });
+
   testWidgets('app opens on the sign-in screen', (tester) async {
     // fake storage: no plugin channel exists under testWidgets
     final session = Session(
@@ -298,6 +395,182 @@ void main() {
     expect(find.textContaining('API base URL'), findsNothing);
     expect(ApiClient.defaultBaseUrl,
         'https://mb-index.nexabie.co.tz/api/v1');
+  });
+
+  testWidgets(
+      'edit flow: report → Edit → prefilled form → PUT → recalculated report',
+      (tester) async {
+    var putCalls = 0;
+    Map<String, dynamic>? sent;
+    final client = ApiClient(
+      baseUrl: ApiClient.defaultBaseUrl,
+      httpClient: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path.endsWith('/meta/form')) {
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'data': {
+                'gender_options': ['Female', 'Male'],
+                'required_fields': [
+                  'individual_name',
+                  'school',
+                  'rater_name',
+                  'rater_title',
+                  'date_of_birth',
+                  'age',
+                  'gender',
+                  'examiner_name',
+                  'examiner_title',
+                  'date_of_rating',
+                ],
+                'required_labels': {
+                  'individual_name': "Individual's Name",
+                  'school': 'School',
+                  'rater_name': "Rater's Name",
+                  'rater_title': "Rater's Title",
+                  'date_of_birth': 'Date of Birth',
+                  'age': 'Age',
+                  'gender': 'Gender',
+                  'examiner_name': "Examiner's Name",
+                  'examiner_title': "Examiner's Title",
+                  'date_of_rating': 'Date of Rating',
+                },
+                'subscales': [
+                  {
+                    'id': 'rb',
+                    'short': 'RB',
+                    'name': 'Role Behaviour',
+                    'item_count': 2,
+                    'questions': ['Q one', 'Q two'],
+                  },
+                  {
+                    'id': 'si',
+                    'short': 'SI',
+                    'name': 'Social Interaction',
+                    'item_count': 2,
+                    'questions': ['Q three', 'Q four'],
+                  },
+                ],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.method == 'PUT') {
+          putCalls++;
+          sent = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'data': {
+                'id': 7,
+                'record': {
+                  'id': 7,
+                  'individual_name': sent!['individual_name'],
+                  'scores': {'autism_index': 91},
+                },
+                'report': {
+                  'autism_index': 91,
+                  'sum_scaled': 70,
+                  'subscale_results': <dynamic>[],
+                },
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'ok': false,
+            'error': {
+              'code': 'unexpected',
+              'message': 'unexpected ${request.method} ${request.url.path}',
+            },
+          }),
+          500,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    addTearDown(client.close);
+    final session = Session(client: client, store: _FakeTokenStore());
+
+    final detail = AssessmentDetail.fromJson({
+      'id': 7,
+      'individual_name': 'Joan Mushi',
+      'school': 'Mwanza Primary',
+      'rater_name': 'Jane Mosha',
+      'rater_title': 'Teacher',
+      'date_of_birth': '2018-05-04',
+      'age': '7',
+      'gender': 'Female',
+      'examiner_name': 'Dr Mwana',
+      'examiner_title': 'Psychologist',
+      'date_of_rating': '2026-11-20',
+      'scores': {
+        'raw': {'RB': 3, 'SI': 2},
+        'scaled': {'RB': 5, 'SI': 4},
+        'percentiles': {'RB': 40, 'SI': 35},
+        'sum_scaled': 60,
+        'composite_percentile': '35',
+        'autism_index': 78,
+        'probability': 'Very Likely',
+        'severity_level': 'Level 2',
+        'severity_desc': 'Requiring Substantial Support',
+      },
+      'item_scores': [
+        {'RB': [1, 2]},
+        {'SI': [0, 3]},
+      ],
+    });
+
+    await tester.pumpWidget(ChangeNotifierProvider<Session>.value(
+      value: session,
+      child: MaterialApp(
+        home: ReportScreen(detail: detail, report: null, recordId: 7),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // the stored record view offers the edit (below the fold on the short
+    // test surface — the ListView builds it lazily)
+    expect(find.text('Record #7'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Edit record'), 200);
+    await tester.pumpAndSettle();
+    expect(find.text('Edit record'), findsOneWidget);
+
+    await tester.tap(find.text('Edit record'));
+    await tester.pumpAndSettle();
+
+    // the form opens prefilled from the stored record
+    expect(find.text('Edit record #7'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Joan Mushi'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Mwanza Primary'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Jane Mosha'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '2018-05-04'), findsOneWidget);
+
+    // save: the full form travels over PUT (fixed pumps — a covered screen
+    // still holds the submitting spinner, which pumpAndSettle would await)
+    await tester.tap(find.text('Recalculate and update'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(putCalls, 1, reason: 'exactly one PUT for one save');
+    expect(sent!['individual_name'], 'Joan Mushi');
+    expect(sent!['school'], 'Mwanza Primary');
+    expect(sent!['gender'], 'Female');
+    expect(sent!['date_of_birth'], '2018-05-04');
+    expect(sent!['rb_item_0'], 1, reason: 'stored marks prefilled the form');
+    expect(sent!['rb_item_1'], 2);
+    expect(sent!['si_item_1'], 3);
+
+    // the recalculated report sits on top with the new Autism Index (91)
+    expect(find.text('91'), findsOneWidget);
+    expect(find.text('Autism Index'), findsWidgets);
   });
 }
 
