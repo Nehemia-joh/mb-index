@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:maisha_bora/main.dart';
 import 'package:maisha_bora/src/api/api_client.dart';
@@ -174,6 +179,57 @@ void main() {
       } finally {
         client.close();
       }
+    });
+  });
+
+  group('stale-connection retry (GET only)', () {
+    test('a GET is retried once when the pooled socket is dead', () async {
+      var calls = 0;
+      final client = ApiClient(
+        baseUrl: 'https://mb-index.nexabie.co.tz/api/v1',
+        httpClient: MockClient((request) async {
+          calls++;
+          if (calls == 1) throw const SocketException('stale keep-alive socket');
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'data': {
+                'items': <dynamic>[],
+                'total': 0,
+                'has_more': false,
+                'scope': 'own',
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      addTearDown(client.close);
+
+      final result = await client.listAssessments();
+      expect(result.items, isEmpty);
+      expect(calls, 2, reason: 'first attempt hit the dead socket, retry worked');
+    });
+
+    test('a POST is never retried — it may have reached the server', () async {
+      var calls = 0;
+      final client = ApiClient(
+        baseUrl: 'https://mb-index.nexabie.co.tz/api/v1',
+        httpClient: MockClient((request) async {
+          calls++;
+          throw const SocketException('connection reset');
+        }),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.login('someone', 'secret'),
+        throwsA(isA<ApiException>()
+            .having((e) => e.code, 'code', 'network')
+            .having((e) => e.statusCode, 'statusCode', 0)),
+      );
+      expect(calls, 1, reason: 'a save/login must not be replayed silently');
     });
   });
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
@@ -72,35 +73,56 @@ class ApiClient {
     Object? body,
   }) async {
     final target = _uri(path);
-    final request = http.Request(method, target);
-    request.headers.addAll(_headers);
-    if (body != null) {
-      request.body = jsonEncode(body);
-    }
 
     // named for error messages: "cannot reach" is useless without where to
     final host = '${target.host}:${target.port}';
 
-    final http.Response response;
-    try {
-      final streamed = await _http
-          .send(request)
-          .timeout(const Duration(seconds: 30));
-      response = await http.Response.fromStream(streamed);
-    } on TimeoutException {
-      throw ApiException(0, 'timeout', 'The server did not respond in time.');
-    } on SocketException {
-      throw ApiException(
-          0,
-          'network',
-          'Cannot reach the server at $host. Check the address '
-          'and your connection.');
-    } on http.ClientException {
-      throw ApiException(
-          0,
-          'network',
-          'Cannot reach the server at $host. Check the address '
-          'and your connection.');
+    http.Response response;
+    var attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        // fresh Request per attempt: http.Request is not safely re-sendable
+        final request = http.Request(method, target);
+        request.headers.addAll(_headers);
+        if (body != null) {
+          request.body = jsonEncode(body);
+        }
+        final streamed = await _http
+            .send(request)
+            .timeout(const Duration(seconds: 30));
+        response = await http.Response.fromStream(streamed);
+        break;
+      } on TimeoutException {
+        throw ApiException(0, 'timeout', 'The server did not respond in time.');
+      } on SocketException catch (e) {
+        // The pooled keep-alive socket is the usual suspect: Apache closes
+        // idle connections after a few seconds, so a request that starts
+        // later (e.g. opening the New tab) can hit a socket the server has
+        // already closed. One quick retry on a fresh connection fixes it.
+        // GETs only — a save POST may have reached the server already.
+        if (attempt < 2 && method == 'GET') {
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          continue;
+        }
+        debugPrint('API network error ($host $method ${target.path}): $e');
+        throw ApiException(
+            0,
+            'network',
+            'Cannot reach the server at $host. Check the address '
+            'and your connection.');
+      } on http.ClientException catch (e) {
+        if (attempt < 2 && method == 'GET') {
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          continue;
+        }
+        debugPrint('API network error ($host $method ${target.path}): $e');
+        throw ApiException(
+            0,
+            'network',
+            'Cannot reach the server at $host. Check the address '
+            'and your connection.');
+      }
     }
 
     Map<String, dynamic> json;
