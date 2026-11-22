@@ -3,9 +3,18 @@ import 'package:provider/provider.dart';
 
 import '../api/models.dart';
 import '../state/session.dart';
+import '../theme/app_theme.dart';
 import 'form_screen.dart';
 import 'report_screen.dart';
+import 'role_screen.dart';
+import 'shell_bits.dart';
 
+/// App shell: the bottom tab bar (New · Records · role tab) with the three
+/// tab bodies kept alive in an [IndexedStack].
+///
+/// Tab contents follow the web navigation in `gars_nav_links()`: everyone
+/// gets New assessment + Records, and the role tab is therapist → Dashboard,
+/// admin → Admin, it_admin → IT admin.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -14,17 +23,121 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _recordsKey = GlobalKey<RecordsTabState>();
+
+  /// Records is the landing tab; the New tab mounts its form on first use.
+  /// Tab bodies are listed in the same order as [NavigationDestination]s.
+  int _index = 1;
+  bool _formMounted = false;
+  Key _formKey = const ValueKey('assessment-form');
+
+  void _select(int index) {
+    setState(() {
+      _index = index;
+      if (index == 0) _formMounted = true; // the New tab
+    });
+  }
+
+  /// Called by the form after a record is saved: land on Records, refreshed,
+  /// and hand the New tab a blank form for the next assessment.
+  void _onRecordSaved() {
+    setState(() {
+      _index = 1; // Records
+      _formMounted = true;
+      _formKey = UniqueKey();
+    });
+    _recordsKey.currentState?.refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<Session>();
+    final user = session.user;
+    final roleTab = roleTabFor((user?.roles ?? const []).toSet());
+
+    final destinations = <NavigationDestination>[
+      const NavigationDestination(
+        icon: Icon(Icons.note_add_outlined),
+        selectedIcon: Icon(Icons.note_add),
+        label: 'New',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.fact_check_outlined),
+        selectedIcon: Icon(Icons.fact_check),
+        label: 'Records',
+      ),
+      if (roleTab != null)
+        NavigationDestination(
+          icon: Icon(switch (roleTab) {
+            'therapist' => Icons.dashboard_outlined,
+            'it_admin' => Icons.admin_panel_settings_outlined,
+            _ => Icons.settings_outlined,
+          }),
+          selectedIcon: Icon(switch (roleTab) {
+            'therapist' => Icons.dashboard,
+            'it_admin' => Icons.admin_panel_settings,
+            _ => Icons.settings,
+          }),
+          label: roleTabLabel(roleTab),
+        ),
+    ];
+
+    final tabs = <Widget>[
+      // 0 · New assessment
+      _formMounted
+          ? FormScreen(key: _formKey, onRecordSaved: _onRecordSaved)
+          : const SizedBox.shrink(),
+      // 1 · Records
+      const RecordsTab(),
+      // 2 · role tab (therapist dashboard / admin / IT admin)
+      if (roleTab != null)
+        RoleScreen(
+          role: roleTab,
+          onNewAssessment: () => _select(0),
+        ),
+    ];
+
+    return Scaffold(
+      body: IndexedStack(
+        index: _index.clamp(0, tabs.length - 1),
+        children: tabs,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index.clamp(0, destinations.length - 1),
+        onDestinationSelected: _select,
+        destinations: destinations,
+      ),
+    );
+  }
+}
+
+/// The records list tab (was the whole home screen).
+class RecordsTab extends StatefulWidget {
+  const RecordsTab({super.key});
+
+  @override
+  State<RecordsTab> createState() => RecordsTabState();
+}
+
+class RecordsTabState extends State<RecordsTab> {
   final List<AssessmentSummary> _items = [];
   int _page = 1;
   bool _hasMore = false;
   bool _loading = false;
   String? _error;
   String _scope = 'own';
+  String? _totalScopeLabel;
 
   @override
   void initState() {
     super.initState();
-    _load(reset: true);
+    refresh();
+  }
+
+  /// Reload from page 1 (public so the shell can refresh after a save).
+  Future<void> refresh() async {
+    _page = 1;
+    await _load(reset: true);
   }
 
   Future<void> _load({bool reset = false}) async {
@@ -51,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         _hasMore = result.hasMore;
         _scope = result.scope;
+        _totalScopeLabel = result.scope == 'all' ? 'All records' : 'My records';
         _error = null;
       });
     } on ApiException catch (e) {
@@ -64,13 +178,6 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _openForm() async {
-    final refreshed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => const FormScreen()),
-    );
-    if (refreshed == true) _load(reset: true);
   }
 
   Future<void> _openRecord(AssessmentSummary summary) async {
@@ -97,26 +204,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _confirmLogout() async {
-    final session = context.read<Session>();
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign out?'),
-        content: Text('Signed in as ${session.user?.fullName ?? ''}.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Sign out')),
-        ],
-      ),
-    );
-    if (yes == true) await session.logout();
-  }
-
   @override
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
@@ -125,30 +212,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Records'),
+        title: const BrandWordmark(),
         actions: [
+          if (_totalScopeLabel != null)
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(right: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0x26FFFFFF), // white 15%
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  _totalScopeLabel!,
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+            ),
           if (user != null)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Center(
                 child: Text(user.username,
-                    style: theme.textTheme.labelMedium),
+                    style: const TextStyle(
+                        color: Color(0xCCFFFFFF), fontSize: 13)),
               ),
             ),
           IconButton(
             tooltip: 'Sign out',
-            onPressed: _confirmLogout,
+            onPressed: () => confirmLogout(context),
             icon: const Icon(Icons.logout),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openForm,
-        icon: const Icon(Icons.add),
-        label: const Text('New assessment'),
-      ),
       body: RefreshIndicator(
-        onRefresh: () => _load(reset: true),
+        onRefresh: refresh,
         child: _buildBody(theme),
       ),
     );
@@ -163,14 +262,14 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(24),
         children: [
           const SizedBox(height: 80),
-          Icon(Icons.cloud_off, size: 48, color: theme.colorScheme.outline),
-          const SizedBox(height: 12),
-          Text(_error!, textAlign: TextAlign.center),
+          const NoticeBar(
+            'Records could not be loaded — check the connection and try again.',
+            kind: NoticeKind.error,
+          ),
           const SizedBox(height: 12),
           Center(
             child: OutlinedButton(
-                onPressed: () => _load(reset: true),
-                child: const Text('Try again')),
+                onPressed: refresh, child: const Text('Try again')),
           ),
         ],
       );
@@ -179,26 +278,33 @@ class _HomeScreenState extends State<HomeScreen> {
       return ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          const SizedBox(height: 80),
-          Icon(Icons.inbox, size: 48, color: theme.colorScheme.outline),
-          const SizedBox(height: 12),
-          const Text('No records yet.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16)),
+          const SizedBox(height: 70),
+          const Icon(Icons.inbox, size: 46, color: Brand.ruleStrong),
+          const SizedBox(height: 14),
+          const Text(
+            'No records yet.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: Brand.display,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: Brand.brand,
+            ),
+          ),
           const SizedBox(height: 6),
           Text(
             _scope == 'all'
-                ? 'Tap “New assessment” to score the first one.'
-                : 'Tap “New assessment” to score your first one.',
+                ? 'Open the New tab to score the first assessment.'
+                : 'Open the New tab to score your first assessment.',
             textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(color: Brand.muted),
           ),
         ],
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       itemCount: _items.length + (_hasMore ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == _items.length) {
@@ -222,11 +328,14 @@ class _HomeScreenState extends State<HomeScreen> {
           margin: const EdgeInsets.symmetric(vertical: 5),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Text('${item.autismIndex}',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onPrimaryContainer)),
+              backgroundColor: Brand.brandSoft,
+              child: Text(
+                '${item.autismIndex}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Brand.brand,
+                ),
+              ),
             ),
             title: Text(item.individualName,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -237,8 +346,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 item.severityLevel,
                 if (item.isMute) 'mute',
               ].join(' · '),
+              style: const TextStyle(color: Brand.muted, fontSize: 13),
             ),
-            trailing: const Icon(Icons.chevron_right),
+            trailing: const Icon(Icons.chevron_right, color: Brand.muted),
             onTap: () => _openRecord(item),
           ),
         );

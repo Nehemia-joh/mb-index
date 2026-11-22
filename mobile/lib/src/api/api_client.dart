@@ -14,9 +14,10 @@ class ApiClient {
   ApiClient({required this.baseUrl, http.Client? httpClient})
       : _http = httpClient ?? http.Client();
 
-  /// Android emulator reaches the host machine at 10.0.2.2; a physical
-  /// phone needs the computer's LAN IP or the public server address.
-  static const defaultBaseUrl = 'http://10.0.2.2:8123/api/v1';
+  /// Production endpoint; the deployed API runs behind HTTPS at
+  /// mb-index.nexabie.co.tz. Dev/emulator addresses are entered once under
+  /// "Server settings" and remembered.
+  static const defaultBaseUrl = 'https://mb-index.nexabie.co.tz/api/v1';
 
   String baseUrl;
   String? token;

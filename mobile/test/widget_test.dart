@@ -5,6 +5,7 @@ import 'package:maisha_bora/main.dart';
 import 'package:maisha_bora/src/api/api_client.dart';
 import 'package:maisha_bora/src/api/models.dart';
 import 'package:maisha_bora/src/state/session.dart';
+import 'package:maisha_bora/src/util/age.dart';
 
 void main() {
   group('API models', () {
@@ -119,6 +120,27 @@ void main() {
     });
   });
 
+  group('age auto-calculation', () {
+    test('measured at the date of rating when one is set', () {
+      expect(ageAt(DateTime(2019, 6, 15), DateTime(2026, 6, 14)), 6);
+      expect(ageAt(DateTime(2019, 6, 15), DateTime(2026, 6, 15)), 7);
+      expect(ageAt(DateTime(2019, 6, 15), DateTime(2026, 6, 16)), 7);
+    });
+
+    test('falls back to today when no rating date is set', () {
+      final today = DateTime.now();
+      expect(ageAt(DateTime(today.year - 7, today.month, today.day)), 7);
+      // birthday tomorrow → still 6
+      expect(ageAt(DateTime(today.year - 7, today.month, today.day + 1)), 6);
+    });
+
+    test('rejects implausible pairs instead of filling nonsense', () {
+      expect(ageAt(DateTime(2030, 1, 1)), isNull); // born in the future
+      expect(ageAt(DateTime(1800, 1, 1)), isNull); // older than 120
+      expect(ageAt(DateTime(2020, 1, 1), DateTime(2019, 1, 1)), isNull);
+    });
+  });
+
   group('server address validation', () {
     test('accepts complete addresses', () {
       expect(ApiClient.looksLikeServerUrl('http://192.168.0.168:8123/api/v1'),
@@ -170,40 +192,31 @@ void main() {
     expect(find.byType(TextField), findsWidgets);
   });
 
-  testWidgets('sign-in screen offers the previously used server address',
+  testWidgets('sign-in screen is production-only (no server settings)',
       (tester) async {
-    const savedUrl = 'http://192.168.0.168:8123/api/v1';
     final session = Session(
       client: ApiClient(baseUrl: ApiClient.defaultBaseUrl),
-      store: _FakeTokenStore(url: savedUrl), // stored, but signed out
+      store: _FakeTokenStore(),
     );
     await tester.pumpWidget(MaishaBoraApp(session: session));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    // the emulator default must not overwrite what the user already typed
-    expect(find.text(savedUrl), findsWidgets);
-    expect(find.text(ApiClient.defaultBaseUrl), findsNothing);
+    expect(find.text('Server settings'), findsNothing);
+    expect(find.textContaining('API base URL'), findsNothing);
+    expect(ApiClient.defaultBaseUrl,
+        'https://mb-index.nexabie.co.tz/api/v1');
   });
 }
 
 class _FakeTokenStore implements TokenStore {
-  _FakeTokenStore({this.url});
-
-  final String? url;
-
-  @override
-  Future<String?> readBaseUrl() async => url;
+  _FakeTokenStore();
 
   @override
   Future<String?> readToken() async => null;
 
   @override
-  Future<void> saveSession(
-          {required String token, required String baseUrl}) async {}
-
-  @override
-  Future<void> saveBaseUrl(String baseUrl) async {}
+  Future<void> saveSession({required String token}) async {}
 
   @override
   Future<void> clear() async {}

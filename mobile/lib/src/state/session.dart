@@ -4,7 +4,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../api/api_client.dart';
 import '../api/models.dart';
 
-/// Persists the bearer token and server address in the Android Keystore.
+/// Persists the bearer token in the Android Keystore.
+///
+/// The server address is not user-configurable: the app always talks to the
+/// production endpoint ([ApiClient.defaultBaseUrl]).
 class TokenStore {
   TokenStore({FlutterSecureStorage? storage})
       : _storage = storage ??
@@ -15,37 +18,24 @@ class TokenStore {
   final FlutterSecureStorage _storage;
 
   static const _kToken = 'gars_token';
-  static const _kUrl = 'gars_base_url';
+  static const _kLegacyUrl = 'gars_base_url'; // written by older builds
 
-  Future<void> saveSession({required String token, required String baseUrl}) =>
-      _storage.write(key: _kToken, value: token).then(
-          (_) => _storage.write(key: _kUrl, value: baseUrl));
+  Future<void> saveSession({required String token}) =>
+      _storage.write(key: _kToken, value: token);
 
   Future<String?> readToken() => _storage.read(key: _kToken);
-
-  Future<String?> readBaseUrl() => _storage.read(key: _kUrl);
-
-  /// Keep the server address the user typed, even when sign-in itself fails
-  /// (wrong password, server down) — otherwise they retype it every attempt.
-  Future<void> saveBaseUrl(String baseUrl) async {
-    try {
-      await _storage.write(key: _kUrl, value: baseUrl);
-    } catch (_) {
-      // storage unavailable (tests) — address just won't persist
-    }
-  }
 
   Future<void> clear() async {
     try {
       await _storage.delete(key: _kToken);
-      await _storage.delete(key: _kUrl);
+      await _storage.delete(key: _kLegacyUrl);
     } catch (_) {
       // plugin missing in tests — nothing to clear
     }
   }
 }
 
-/// App-wide auth state: who is signed in, against which server.
+/// App-wide auth state: who is signed in.
 class Session extends ChangeNotifier {
   Session({required this.client, required this.store});
 
@@ -62,12 +52,7 @@ class Session extends ChangeNotifier {
   /// Restore a previous session from secure storage on app start.
   Future<void> restore() async {
     try {
-      final savedUrl = await store.readBaseUrl();
       final savedToken = await store.readToken();
-      // the address sticks even without a token (e.g. signed out / expired)
-      if (savedUrl != null && savedUrl.isNotEmpty) {
-        client.baseUrl = savedUrl;
-      }
       if (savedToken == null || savedToken.isEmpty) {
         restored = true;
         notifyListeners();
@@ -88,14 +73,14 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> login(String baseUrl, String username, String password) async {
+  Future<bool> login(String username, String password) async {
     busy = true;
     error = null;
     notifyListeners();
     try {
       final result = await client.login(username, password);
       user = result.user;
-      await store.saveSession(token: result.token, baseUrl: client.baseUrl);
+      await store.saveSession(token: result.token);
       return true;
     } on ApiException catch (e) {
       error = e.message;

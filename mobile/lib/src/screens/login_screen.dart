@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../api/api_client.dart';
 import '../state/session.dart';
+import '../theme/app_theme.dart';
 
+/// Sign-in screen: the field-session photograph (static/wallpaper.jpg) as a
+/// full-bleed backdrop under a soft brand scrim, with the form on a card.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -12,28 +14,11 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _url = TextEditingController(text: ApiClient.defaultBaseUrl);
   final _username = TextEditingController();
   final _password = TextEditingController();
-  bool _showServer = false;
-  bool _urlSeeded = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // show the address restored from storage (or the last one the user typed)
-    // instead of the emulator default — the login screen only mounts after
-    // Session.restore() has finished.
-    if (!_urlSeeded) {
-      _urlSeeded = true;
-      final saved = context.read<Session>().client.baseUrl.trim();
-      if (saved.isNotEmpty) _url.text = saved;
-    }
-  }
 
   @override
   void dispose() {
-    _url.dispose();
     _username.dispose();
     _password.dispose();
     super.dispose();
@@ -41,27 +26,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _submit() async {
     final session = context.read<Session>();
-    final url = _url.text.trim();
-    if (url.isEmpty || _username.text.trim().isEmpty || _password.text.isEmpty) {
-      session.error = 'Server address, username and password are required.';
+    if (_username.text.trim().isEmpty || _password.text.isEmpty) {
+      session.error = 'Username and password are required.';
       setState(() {});
       return;
     }
-    // catch address typos (e.g. a truncated 192.168.0.168) before they
-    // surface as a generic "cannot reach the server"
-    if (!ApiClient.looksLikeServerUrl(url)) {
-      session.error =
-          'That server address is not valid — expected http://<ip>:<port>/api/v1 '
-          '(e.g. http://192.168.0.168:8123/api/v1).';
-      setState(() {});
-      return;
-    }
-    // point the client at this server before attempting login
-    session.client.baseUrl = url;
-    await session.store.saveBaseUrl(url); // survives a failed attempt
-    if (!mounted) return;
-    final ok =
-        await session.login(url, _username.text.trim(), _password.text);
+    final ok = await session.login(_username.text.trim(), _password.text);
     if (!mounted) return;
     if (!ok) setState(() {}); // error is on the session
   }
@@ -69,110 +39,163 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
-    final theme = Theme.of(context);
 
     return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Icon(Icons.psychology_alt,
-                    size: 56, color: theme.colorScheme.primary),
-                const SizedBox(height: 8),
-                Text(
-                  'Maisha Bora',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.headlineMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'GARS-3 assessments and records',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 24),
-                if (session.error != null) ...[
-                  MaterialBanner(
-                    backgroundColor:
-                        theme.colorScheme.errorContainer,
-                    content: Text(session.error!,
-                        style:
-                            TextStyle(color: theme.colorScheme.onErrorContainer)),
-                    actions: const [SizedBox.shrink()],
-                  ),
-                  const SizedBox(height: 12),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // — the photograph —
+          Image.asset(
+            'assets/bg/wallpaper.jpg',
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.medium,
+          ),
+          // — brand scrim so the form stays readable over any part of it —
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0, .38, .72, 1],
+                colors: [
+                  Color(0xE6094D94), // brand-deep over the top of the photo
+                  Color(0x590B5CAF),
+                  Color(0xB3F4F8FF),
+                  Color(0xF2F4F8FF),
                 ],
-                TextField(
-                  controller: _username,
-                  autofillHints: const [AutofillHints.username],
-                  decoration: const InputDecoration(
-                    labelText: 'Username',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  autofillHints: const [AutofillHints.password],
-                  onSubmitted: (_) => _submit(),
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                    prefixIcon: Icon(Icons.lock_outline),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ExpansionTile(
-                  title: const Text('Server settings',
-                      style: TextStyle(fontSize: 14)),
-                  subtitle: Text(_url.text, style: const TextStyle(fontSize: 12)),
-                  initiallyExpanded: _showServer,
-                  onExpansionChanged: (v) => setState(() => _showServer = v),
+              ),
+            ),
+          ),
+          // — the form —
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      child: TextField(
-                        controller: _url,
-                        keyboardType: TextInputType.url,
-                        onChanged: (_) => setState(() {}), // live preview
-                        decoration: const InputDecoration(
-                          labelText: 'API base URL',
-                          hintText: 'http://10.0.2.2:8123/api/v1',
-                          helperText:
-                              'Emulator uses 10.0.2.2; a physical phone needs '
-                              "the server's LAN IP (e.g. 192.168.0.168).",
-                          helperMaxLines: 3,
-                        ),
+                    Center(
+                      child: Image.asset(
+                        'assets/icon/mb-mark.png',
+                        width: 76,
+                        height: 76,
+                        filterQuality: FilterQuality.medium,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Maisha Bora',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: Brand.display,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 40,
+                        height: 1.05,
+                        color: Brand.gold,
+                        shadows: [
+                          Shadow(color: Color(0x80002A55), blurRadius: 12),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Autism Rating Scale, Third Edition',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        shadows: [
+                          Shadow(color: Color(0x99002A55), blurRadius: 8),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Brand.surface.withOpacity(.96),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Brand.rule),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x330B5CAF),
+                            blurRadius: 24,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (session.error != null) ...[
+                            NoticeBar(session.error!, kind: NoticeKind.error),
+                            const SizedBox(height: 14),
+                          ],
+                          TextField(
+                            controller: _username,
+                            autofillHints: const [AutofillHints.username],
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _password,
+                            obscureText: true,
+                            autofillHints: const [AutofillHints.password],
+                            onSubmitted: (_) => _submit(),
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: Icon(Icons.lock_outline),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          FilledButton(
+                            onPressed: session.busy ? null : _submit,
+                            child: session.busy
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child:
+                                        CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('Sign in'),
+                          ),
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Every assessment you complete helps a child '
+                            'and their family take the next step forward.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Brand.muted,
+                              fontSize: 13,
+                              height: 1.45,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Thank you for the work you do. 🌱',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Brand.brand,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: session.busy ? null : _submit,
-                  child: session.busy
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Sign in'),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Accounts are created by your Administrator.',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

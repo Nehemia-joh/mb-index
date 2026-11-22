@@ -1,5 +1,5 @@
 name: maisha_bora
-description: "Maisha Bora GARS-3 field app — assessments and records against the /api/v1 JSON API."
+description: "Maisha Bora field app — assessments and records against the /api/v1 JSON API."
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -14,6 +14,7 @@ dependencies:
   provider: ^6.1.2
   flutter_secure_storage: ^9.2.2
   intl: ^0.19.0
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +23,29 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # the web app's own mark (static/apple-touch-icon.png) — same icon in both,
+  # plus the sign-in backdrop (static/wallpaper.jpg)
+  assets:
+    - assets/icon/
+    - assets/bg/
+
+  # MMRC brand type: DM Sans (body) + Cormorant Garamond (headings),
+  # the pair the web app loads from Google Fonts.
+  fonts:
+    - family: DMSans
+      fonts:
+        - asset: assets/fonts/DMSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/DMSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/DMSans-Bold.ttf
+          weight: 700
+    - family: CormorantGaramond
+      fonts:
+        - asset: assets/fonts/CormorantGaramond-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/CormorantGaramond-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/CormorantGaramond-Bold.ttf
+          weight: 700

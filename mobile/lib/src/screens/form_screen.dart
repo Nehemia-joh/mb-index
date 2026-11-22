@@ -3,12 +3,18 @@ import 'package:provider/provider.dart';
 
 import '../api/models.dart';
 import '../state/session.dart';
+import '../theme/app_theme.dart';
+import '../util/age.dart';
 import 'report_screen.dart';
 
-/// The GARS-3 rating form: demographics + six subscales, rendered from
+/// The Maisha Bora rating form: demographics + six subscales, rendered from
 /// GET /meta/form so item wordings always match the server.
 class FormScreen extends StatefulWidget {
-  const FormScreen({super.key});
+  const FormScreen({super.key, this.onRecordSaved});
+
+  /// Called once a record is saved and its report dismissed, so the shell
+  /// can land on the refreshed Records tab.
+  final VoidCallback? onRecordSaved;
 
   @override
   State<FormScreen> createState() => _FormScreenState();
@@ -72,6 +78,7 @@ class _FormScreenState extends State<FormScreen> {
           }
         }
       });
+      _autoFillAge(overwrite: false); // fill only when still empty
     } on ApiException catch (e) {
       if (e.isAuth && mounted) {
         await session.sessionExpired(e.message);
@@ -104,7 +111,20 @@ class _FormScreenState extends State<FormScreen> {
       } else {
         _dateOfRating = picked;
       }
+      // same rule as the web form: a date change recomputes the age
+      _autoFillAge(overwrite: true);
     });
+  }
+
+  /// Age in whole years measured at the date of rating (or today) — mirrors
+  /// `autoFillAge()` in includes/rating_form.php.
+  void _autoFillAge({required bool overwrite}) {
+    final field = _fields['age'];
+    if (field == null || _dob == null) return;
+    if (!overwrite && field.text.trim().isNotEmpty) return;
+    final years = ageAt(_dob!, _dateOfRating);
+    if (years == null) return;
+    field.text = '$years';
   }
 
   Map<String, dynamic> _buildPayload() {
@@ -146,7 +166,7 @@ class _FormScreenState extends State<FormScreen> {
     try {
       final result = await session.client.createAssessment(payload);
       if (!mounted) return;
-      await Navigator.of(context).pushReplacement<bool, bool>(
+      await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => ReportScreen(
             detail: result.record,
@@ -155,6 +175,8 @@ class _FormScreenState extends State<FormScreen> {
           ),
         ),
       );
+      // back on the shell: show the refreshed Records tab
+      widget.onRecordSaved?.call();
     } on ApiException catch (e) {
       if (e.isAuth && mounted) {
         await session.sessionExpired(e.message);
@@ -188,21 +210,15 @@ class _FormScreenState extends State<FormScreen> {
     final meta = _meta;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('New assessment')),
+      appBar: AppBar(title: const BrandWordmark()),
       body: meta == null
           ? _buildLoading(theme)
           : ListView(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
               children: [
                 if (_submitError != null) ...[
-                  MaterialBanner(
-                    backgroundColor: theme.colorScheme.errorContainer,
-                    content: Text(_submitError!,
-                        style: TextStyle(
-                            color: theme.colorScheme.onErrorContainer)),
-                    actions: const [SizedBox.shrink()],
-                  ),
-                  const SizedBox(height: 8),
+                  NoticeBar(_submitError!, kind: NoticeKind.error),
+                  const SizedBox(height: 10),
                 ],
                 _demographicsCard(theme, meta),
                 const SizedBox(height: 12),
@@ -269,12 +285,21 @@ class _FormScreenState extends State<FormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('1 · Identifying information',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Text('Fields marked * are required before the record can be saved.',
-                style: theme.textTheme.bodySmall),
+            const Text('1 · Identifying information', style: TextStyle(
+              fontFamily: Brand.display,
+              fontWeight: FontWeight.w600,
+              fontSize: 21,
+              height: 1.15,
+              color: Brand.brand,
+            )),
+            Container(
+              width: 48,
+              height: 2,
+              color: Brand.gold,
+              margin: const EdgeInsets.only(top: 7, bottom: 10),
+            ),
+            const Text('Fields marked * are required before the record can be saved.',
+                style: TextStyle(color: Brand.muted, fontSize: 13)),
             const SizedBox(height: 14),
             TextField(
                 controller: _fields['individual_name'],
@@ -288,7 +313,13 @@ class _FormScreenState extends State<FormScreen> {
                 Expanded(
                   child: TextField(
                       controller: _fields['age'],
-                      decoration: dec('Age * (e.g. 7y 4m)')),
+                      keyboardType: TextInputType.number,
+                      decoration: dec('Age *').copyWith(
+                        helperText: _dob == null
+                            ? 'Set the date of birth to calculate it, or type the age.'
+                            : 'Calculated from date of birth at the date of rating.',
+                        helperMaxLines: 2,
+                      )),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -384,10 +415,19 @@ class _FormScreenState extends State<FormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('2 · Rating form',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
+            const Text('2 · Rating form', style: TextStyle(
+              fontFamily: Brand.display,
+              fontWeight: FontWeight.w600,
+              fontSize: 21,
+              height: 1.15,
+              color: Brand.brand,
+            )),
+            Container(
+              width: 48,
+              height: 2,
+              color: Brand.gold,
+              margin: const EdgeInsets.only(top: 7, bottom: 10),
+            ),
             const Wrap(
               spacing: 12,
               runSpacing: 4,
@@ -417,15 +457,13 @@ class _FormScreenState extends State<FormScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: mutedOut
-                  ? theme.colorScheme.surfaceContainerHighest
-                  : theme.colorScheme.primaryContainer,
+              color: mutedOut ? Brand.paper : Brand.brandSoft,
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(sub.short,
                 style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: theme.colorScheme.onPrimaryContainer)),
+                    fontWeight: FontWeight.w700,
+                    color: mutedOut ? Brand.muted : Brand.brand)),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -434,10 +472,14 @@ class _FormScreenState extends State<FormScreen> {
                     ?.copyWith(fontWeight: FontWeight.w600)),
           ),
           if (mutedOut)
-            const Text('mute', style: TextStyle(fontSize: 12))
+            const Text('mute',
+                style: TextStyle(fontSize: 12, color: Brand.muted))
           else
             Text('${_subtotal(sub)} / ${sub.itemCount * 3}',
-                style: theme.textTheme.labelMedium),
+                style: const TextStyle(
+                    color: Brand.muted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
         ],
       ),
       children: [
@@ -461,9 +503,10 @@ class _FormScreenState extends State<FormScreen> {
             children: [
               CircleAvatar(
                 radius: 10,
-                backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                backgroundColor: Brand.paper,
                 child: Text('${index + 1}',
-                    style: const TextStyle(fontSize: 11)),
+                    style: const TextStyle(
+                        fontSize: 11, color: Brand.muted)),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -513,15 +556,19 @@ class _Legend extends StatelessWidget {
         width: 18,
         height: 18,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          borderRadius: BorderRadius.circular(4),
+        decoration: const BoxDecoration(
+          color: Brand.brandSoft,
+          borderRadius: BorderRadius.all(Radius.circular(4)),
         ),
         child: Text(mark,
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Brand.brand)),
       ),
       const SizedBox(width: 4),
-      Text(label, style: Theme.of(context).textTheme.bodySmall),
+      Text(label,
+          style: const TextStyle(fontSize: 12, color: Brand.muted)),
     ]);
   }
 }

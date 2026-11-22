@@ -5,6 +5,7 @@ import 'src/api/api_client.dart';
 import 'src/screens/home_screen.dart';
 import 'src/screens/login_screen.dart';
 import 'src/state/session.dart';
+import 'src/theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,7 +16,7 @@ class MaishaBoraApp extends StatefulWidget {
   const MaishaBoraApp({super.key, this.session});
 
   /// Tests may inject a session; production creates its own (with secure
-  /// storage and the default server address) exactly once.
+  /// storage and the production server address) exactly once.
   final Session? session;
 
   @override
@@ -38,26 +39,12 @@ class _MaishaBoraAppState extends State<MaishaBoraApp> {
 
   @override
   Widget build(BuildContext context) {
-    final base = ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0B5CAF)),
-    );
     return ChangeNotifierProvider<Session>.value(
       value: _session,
       child: MaterialApp(
-        title: 'Maisha Bora GARS-3',
+        title: 'Maisha Bora',
         debugShowCheckedModeBanner: false,
-        theme: base.copyWith(
-          inputDecorationTheme: const InputDecorationTheme(
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-          elevatedButtonTheme: ElevatedButtonThemeData(
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            ),
-          ),
-        ),
+        theme: buildAppTheme(),
         home: Consumer<Session>(
           builder: (context, session, _) {
             if (!session.restored) {
@@ -79,14 +66,32 @@ class _Splash extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
+      backgroundColor: Brand.paper,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Maisha Bora GARS-3'),
+            Image.asset('assets/icon/mb-mark.png', width: 72, height: 72),
+            const SizedBox(height: 16),
+            const Text(
+              'Maisha Bora',
+              style: TextStyle(
+                fontFamily: Brand.display,
+                fontWeight: FontWeight.w600,
+                fontSize: 26,
+                color: Brand.brand,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const SizedBox(
+              width: 26,
+              height: 26,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Brand.brand,
+              ),
+            ),
           ],
         ),
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
+import '../theme/app_theme.dart';
 
 /// Scoring report after a save, and the read-only view of a stored record.
 class ReportScreen extends StatelessWidget {
@@ -45,54 +46,58 @@ class ReportScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          // — the Autism Index plate —
+          // — the Autism Index plate (blue surface, gold figure) —
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(8),
+              color: Brand.brand,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: Brand.brandDeep),
             ),
             child: Row(
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Autism Index',
-                        style: TextStyle(
-                            color: theme.colorScheme.onPrimary
-                                .withOpacity(0.8))),
-                    Text('$ai',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          backgroundColor: theme.colorScheme.onPrimary,
-                          fontSize: 44,
-                          fontWeight: FontWeight.bold,
-                          height: 1.1,
-                        )),
+                    const Text('Autism Index',
+                        style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 13)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Brand.gold,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text('$ai',
+                          style: const TextStyle(
+                            color: Brand.brand,
+                            fontSize: 42,
+                            fontWeight: FontWeight.w700,
+                            height: 1.1,
+                          )),
+                    ),
                   ],
                 ),
-                const SizedBox(width: 24),
+                const SizedBox(width: 20),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('${detail.sumScaled}',
-                          style: TextStyle(
-                              color: theme.colorScheme.onPrimary,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold)),
+                          style: const TextStyle(
+                            color: Brand.gold,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                          )),
                       Text(
                           'Sum of scaled scores, ${report?.useSix ?? (detail.isMute ? 4 : 6)} subscales',
-                          style: TextStyle(
-                              color: theme.colorScheme.onPrimary
-                                  .withOpacity(0.8),
-                              fontSize: 12)),
+                          style: const TextStyle(
+                              color: Color(0xCCFFFFFF), fontSize: 12)),
                       const SizedBox(height: 6),
                       Text('Percentile ${detail.compositePercentile}',
-                          style: TextStyle(
-                              color: theme.colorScheme.onPrimary
-                                  .withOpacity(0.9),
-                              fontSize: 13)),
+                          style: const TextStyle(
+                              color: Color(0xE6FFFFFF), fontSize: 13)),
                     ],
                   ),
                 ),
@@ -109,10 +114,7 @@ class ReportScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Interpretation',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  const SectionHeading('Interpretation'),
                   if (notAsd)
                     Text(
                       'The probability of an autism spectrum disorder is '
@@ -130,18 +132,21 @@ class ReportScreen extends StatelessWidget {
                       style: theme.textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.tertiaryContainer,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(severity,
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.onTertiaryContainer)),
-                    ),
+                    Builder(builder: (context) {
+                      final c = _severityColor(severity);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: c.withOpacity(.12),
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: c.withOpacity(.45)),
+                        ),
+                        child: Text(severity,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700, color: c)),
+                      );
+                    }),
                   ],
                 ],
               ),
@@ -157,10 +162,7 @@ class ReportScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Subscale performance',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
+                  const SectionHeading('Subscale performance'),
                   Table(
                     columnWidths: const {
                       0: FlexColumnWidth(3),
@@ -209,10 +211,7 @@ class ReportScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Identifying information',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  const SectionHeading('Identifying information'),
                   _fact("Individual's name", detail.individualName, theme),
                   _fact('School', detail.school, theme),
                   _fact('Age', detail.age, theme),
@@ -242,6 +241,15 @@ class ReportScreen extends StatelessWidget {
       ),
     );
   }
+
+  /// Severity colours from the web design system: Level 2 = orange,
+  /// Level 3 = red-deep, everything else = the "ok" green (Level 1).
+  static Color _severityColor(String severity) => switch (severity) {
+        'Level 2' => Brand.level2,
+        'Level 3' => Brand.level3,
+        'Not ASD' => Brand.muted,
+        _ => Brand.ok,
+      };
 
   Widget _th(String text, {bool right = false}) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
