@@ -231,6 +231,42 @@ void main() {
       );
       expect(calls, 1, reason: 'a save/login must not be replayed silently');
     });
+    test('form meta is fetched once and then served from the session cache',
+        () async {
+      var calls = 0;
+      final client = ApiClient(
+        baseUrl: 'https://mb-index.nexabie.co.tz/api/v1',
+        httpClient: MockClient((request) async {
+          calls++;
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'data': {
+                'gender_options': ['Male'],
+                'required_fields': ['individual_name'],
+                'required_labels': {'individual_name': "Individual's name"},
+                'subscales': [
+                  {
+                    'id': 'rb',
+                    'short': 'RB',
+                    'name': 'Role Behaviour',
+                    'item_count': 2,
+                  },
+                ],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      addTearDown(client.close);
+
+      final first = await client.metaForm();
+      final second = await client.metaForm();
+      expect(calls, 1, reason: 'the second call must hit the cache');
+      expect(second.subscales, first.subscales);
+    });
   });
 
   testWidgets('app opens on the sign-in screen', (tester) async {

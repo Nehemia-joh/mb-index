@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -49,6 +51,19 @@ class Session extends ChangeNotifier {
 
   bool get signedIn => user != null;
 
+  /// Fetch the form definitions in the background so the New tab opens
+  /// instantly on first use (a production round trip takes ~2 s). Failures
+  /// are ignored — the form screen fetches live and shows errors itself.
+  void _warmFormMeta() {
+    unawaited(() async {
+      try {
+        await client.metaForm();
+      } catch (_) {
+        // offline or expired: nothing to warm, the form will retry later
+      }
+    }());
+  }
+
   /// Restore a previous session from secure storage on app start.
   Future<void> restore() async {
     try {
@@ -60,6 +75,7 @@ class Session extends ChangeNotifier {
       }
       client.token = savedToken;
       user = await client.me();
+      _warmFormMeta(); // signed-in app restart: New tab is instant too
     } on ApiException catch (e) {
       if (e.isAuth || e.statusCode == 401) {
         await store.clear();
@@ -81,6 +97,7 @@ class Session extends ChangeNotifier {
       final result = await client.login(username, password);
       user = result.user;
       await store.saveSession(token: result.token);
+      _warmFormMeta();
       return true;
     } on ApiException catch (e) {
       error = e.message;

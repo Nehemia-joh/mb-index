@@ -188,7 +188,19 @@ class ApiClient {
         (data['user'] as Map?)?.cast<String, dynamic>() ?? const {});
   }
 
-  Future<FormMeta> metaForm() async => FormMeta.fromJson(await _get('/meta/form'));
+  /// Form definitions (item wordings, required fields, subscales) change
+  /// only when an administrator edits them — cache them for the app session
+  /// so the New tab and the post-save blank form open instantly instead of
+  /// waiting ~2 s on the production round-trip. An app restart re-fetches.
+  FormMeta? _meta;
+
+  Future<FormMeta> metaForm() async {
+    final cached = _meta;
+    if (cached != null) return cached;
+    final parsed = FormMeta.fromJson(await _get('/meta/form'));
+    _meta = parsed;
+    return parsed;
+  }
 
   Future<({List<AssessmentSummary> items, int total, bool hasMore, String scope})>
       listAssessments({int page = 1, int perPage = 20}) async {
